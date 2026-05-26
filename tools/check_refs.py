@@ -35,7 +35,12 @@ _LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 # Inline-Code `` `...` ``-Spans werden vor dem Link-Match aus der Zeile
 # entfernt, damit Demo-Strings in Backticks (z. B. ``[text](path)``)
 # nicht als echte Links interpretiert werden.
-_INLINE_CODE_PATTERN = re.compile(r"`[^`]*`")
+#
+# Zwei Alternativen, laenger zuerst (Markdown erlaubt N-fache Backticks
+# als Delimiter, sodass der Span N-1 einzelne Backticks enthalten kann):
+# - ``...`` (doppelter Delimiter, darf einzelne ` enthalten — lazy match)
+# - `...`  (einfacher Delimiter, keine ` im Inneren)
+_INLINE_CODE_PATTERN = re.compile(r"``.+?``|`[^`]+`")
 
 # Pfade mit einem dieser Praefixe sind keine relativen Filesystem-Refs.
 _EXTERNAL_PREFIXES: tuple[str, ...] = (
