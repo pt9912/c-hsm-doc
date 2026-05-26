@@ -1,0 +1,49 @@
+# docker-compose.dev.yml — lokale Entwicklungsumgebung für c-hsm-doc.
+#
+# Erfüllt HSM-ENV-003 (lokale Entwicklung gegen SoftHSM v2). Stellt
+# einen SoftHSM-Token im benannten Volume `softhsm-tokens` bereit, das
+# der c-hsm-doc-server in einer künftigen Dev-Variante via PKCS#11
+# attached.
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up softhsm-init
+#   docker compose -f docker-compose.dev.yml down            # ohne -v: Volume bleibt
+#
+# Bootstrap-Status: server-dev ist auskommentiert, bis cmd/hsmdoc einen
+# echten gRPC-Server bereitstellt (Roadmap M1).
+
+services:
+
+  softhsm-init:
+    build:
+      context: ./dev/softhsm
+    container_name: c-hsm-doc-softhsm-init
+    environment:
+      TOKEN_LABEL: ${SOFTHSM_TOKEN_LABEL:-c-hsm-doc-dev}
+      USER_PIN: ${SOFTHSM_USER_PIN:-1234}
+      SO_PIN: ${SOFTHSM_SO_PIN:-5678}
+    volumes:
+      - softhsm-tokens:/var/lib/softhsm/tokens
+
+  # Folgt mit Roadmap M1, wenn cmd/hsmdoc einen echten Server liefert.
+  # Hinweis: das Runtime-Distroless-Image (Stage `runtime`) enthält
+  # keine SoftHSM-Library; für den Dev-Lauf wird eine eigene Dev-Stage
+  # oder ein eigenes Dev-Dockerfile benötigt, das libsofthsm2.so
+  # mitführt. Eigene ADR wird das beim M1-Einzug regeln.
+  #
+  # server-dev:
+  #   image: c-hsm-doc-server:dev
+  #   depends_on:
+  #     softhsm-init:
+  #       condition: service_completed_successfully
+  #   environment:
+  #     HSMDOC_PKCS11_MODULE: /usr/lib/softhsm/libsofthsm2.so
+  #     HSMDOC_PKCS11_TOKEN_LABEL: c-hsm-doc-dev
+  #     HSMDOC_PKCS11_USER_PIN: 1234
+  #   volumes:
+  #     - softhsm-tokens:/var/lib/softhsm/tokens
+  #   ports:
+  #     - "9443:9443"
+
+volumes:
+  softhsm-tokens:

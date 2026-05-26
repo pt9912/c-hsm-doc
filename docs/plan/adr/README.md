@@ -19,6 +19,7 @@ geschärfte Stelle.
 | ADR  | Titel                                                                                | Status   | Datum      | Schärfungen / Folge-ADRs |
 | ---- | ------------------------------------------------------------------------------------ | -------- | ---------- | ------------------------ |
 | 0001 | [Dokumentations- und Planungsstruktur](0001-documentation-and-planning-structure.md) | Accepted | 2026-05-26 | —                        |
+| 0002 | [Docker-only Build- und Lieferkette für den Go-Server](0002-docker-only-build-pipeline.md) | Accepted | 2026-05-26 | —                        |
 
 ---
 

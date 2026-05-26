@@ -1,0 +1,37 @@
+# Build-Artefakte
+/out/
+/dist/
+/coverage/
+*.test
+*.out
+
+# Streunende Go-Binaries aus lokalen `go build`-Läufen (kanonischer
+# Build-Pfad ist `make build` ins Runtime-Image; lokale Binaries
+# sollten nicht eingecheckt werden).
+/c-hsm-doc-server
+/hsmdoc
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Agent / tooling working dirs
+.claude/
+.codex/
+.agents/
+
+# Lokale Env-Overrides (nie Secrets committen)
+.env
+.env.local
+
+# Java-Client (folgt als eigene Scaffold-Runde)
+/client/target/
+/client/.gradle/
+/client/build/

@@ -1,0 +1,44 @@
+# Build-Kontext-Filter für c-hsm-doc. Hält den Build deterministisch
+# und schlank. Siehe ADR 0002.
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# CI
+.github
+
+# Editor / IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Agent / tooling working dirs
+.claude
+.codex
+.agents
+
+# Local build / test artefacts (Defense-in-Depth — Docker-only Workflow
+# heißt diese sollten nie lokal existieren, aber wenn doch, nicht in
+# den Build-Kontext bluten)
+out
+dist
+coverage
+coverage*
+*.test
+*.out
+*.log
+
+# Java-Client kommt in eigener Scaffold-Runde; bis dahin nicht
+# Bestandteil des Server-Build-Kontexts
+client
+
+# Lokale Dev-Umgebung wird via docker-compose.dev.yml separat verwaltet,
+# gehört nicht in den Server-Build-Kontext
+dev
+docker-compose.dev.yml
+
+# Die .dockerignore selbst wird nicht ins Image gebraucht
+.dockerignore
