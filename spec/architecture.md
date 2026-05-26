@@ -108,13 +108,16 @@ Bezug: `HSM-ARCH-001..002` (Lastenheft), `HSM-ARCH-003..005`, `HSM-FA-FAIL-005`,
 `c-hsm-doc-client` (Java 21) spiegelt nur die RPC-Seite:
 
 ```text
-+----------------------+                +-----------------+        gRPC/TLS 1.3
-|  Application Code    |--->|  Public Client API |--->|  gRPC-Stub   |---> Network
-+----------------------+    +--------------------+    +--------------+
-                             |  Retry/Backpressure  |
-                             |  Exception-Mapping   |
-                             |  TLS/mTLS-Config     |
-                             +----------------------+
++----------------------+    +----------------------+    +--------------+       gRPC/TLS 1.3
+|  Application Code    |--->|  Public Client API   |--->|  gRPC-Stub   |-----> Network
++----------------------+    +----------+-----------+    +--------------+
+                                      |
+                                      v
+                            +----------------------+
+                            | Retry/Backpressure   |
+                            | Exception-Mapping    |
+                            | TLS/mTLS-Config      |
+                            +----------------------+
 ```
 
 Bezug: `HSM-API-JAVA-001` (Lastenheft), `HSM-API-JAVA-002..005` (Spezifikation),
