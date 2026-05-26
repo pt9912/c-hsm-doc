@@ -407,7 +407,9 @@ Hinweis: Jeder Retry erzeugt zwangsläufig einen neuen Ciphertext und einen neue
 
 #### HSM-FA-AUDIT-001 – Audit-Pflichtfelder
 
-Jeder Audit-Eintrag MUSS mindestens folgende Felder enthalten: Zeitstempel (UTC), Operation, Key-ID, Key-Version, Doc-ID, Caller-Identität, Resultat, Fehlerklasse, Stream-ID, Request-ID, Trace-ID.
+Jeder Audit-Eintrag MUSS mindestens folgende Felder enthalten: Zeitstempel (UTC), Operation, Key-ID, Key-Version, Doc-ID, Caller-Identität, Tenant-ID, Resultat, Fehlerklasse, Stream-ID, Request-ID, Trace-ID.
+
+Die Tenant-ID erfüllt zusammen mit `HSM-FA-TENANT-004` die Mandantenkontext-Pflicht. Im Single-Tenant-Bootstrap-Modus ist ein definierter Default-Wert (z. B. `default`) zulässig.
 
 Konkretes Schema: siehe spec/spezifikation.md.
 

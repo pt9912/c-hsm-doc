@@ -29,20 +29,28 @@ Java-Client ohne JNI.
   `HSM-FA-KEY-001..002`, `HSM-FA-QUEUE-001`, `HSM-FA-RETRY-001..002`,
   `HSM-FA-AUDIT-001..005`, `HSM-FA-FAIL-002`.
 - Mandantenisolation: `HSM-FA-TENANT-001..002` minimal (Single-Tenant
-  zulässig, mehrstufige Quotas folgen in M3).
+  zulässig, mehrstufige Quotas folgen in M4).
 - Schnittstellen: `HSM-API-JAVA-001`, `HSM-API-GRPC-001..003`,
   `HSM-API-P11-001`, `HSM-API-CFG-001..002`.
+- Umgebung: `HSM-ENV-001..003` (Container, Kubernetes, lokale SoftHSM-
+  Dev-Umgebung; bereits durch ADR 0002 und Helm-Chart-Stub adressiert).
 - NFA: `HSM-NFA-MEM-001..002`, `HSM-NFA-OPS-001..003`,
   `HSM-NFA-PORT-001`, `HSM-NFA-PORT-003`, `HSM-NFA-SEC-001`,
   `HSM-NFA-SEC-003`, `HSM-NFA-SEC-007..008`.
 - Architektur: `HSM-ARCH-001..002`, `HSM-PRINC-001..003`.
 
-**Aus dem MVP ausgeschlossen** (kommt in M2/M3):
+**Aus dem MVP ausgeschlossen** (kommt in M2/M3/M4):
 
-- `HSM-FA-AUDIT-002` Hash-Chain + externe Verankerung,
+- `HSM-FA-AUDIT-006..008` Segment-Signatur, externe Verankerung,
+  Chain-Rotation (die regulierten Detail-Verfahren oberhalb der in
+  `HSM-FA-AUDIT-002` geforderten Basis-Hash-Chain),
 - `HSM-FA-KEY-003` Schlüsselrotation,
-- `HSM-FA-KEY-005` Usage-Limits,
-- `HSM-FA-TENANT-003..004` Quotas + Fair Scheduling,
+- `HSM-FA-KEY-005..006` Usage-Limits (LH-Pflicht + SP-Detail),
+- `HSM-FA-TENANT-003` Quotas pro Mandant,
+- `HSM-FA-TENANT-004` vollständiger Mandantenkontext in Audit/Telemetrie
+  (M1 trägt die Tenant-ID nur als Default-Wert),
+- `HSM-FA-TENANT-005..006` Fair Scheduling und Tenant-Metriken
+  (Spezifikation, kommen in M4),
 - `HSM-NFA-PERF-001..004` Performance-Zielwerte (Messung erst in M3),
 - `HSM-COMP-001..002` BSI-konforme Cipher-Suites (formaler Nachweis in
   M3 gegen Produktionsprofile),
@@ -72,9 +80,9 @@ für Behörden- und regulierte Umgebungen typisch sind.
 
 **Scope (zusätzlich zu M1):**
 
-- `HSM-FA-AUDIT-002` Hash-Chain + Detail-Verfahren aus Spezifikation
-  Kapitel 7 (Segmentsignatur, Verankerung, Chain-Rotation, Durability,
-  zulässige Senken).
+- `HSM-FA-AUDIT-006..008` Detail-Verfahren aus Spezifikation Kapitel 7
+  (Segment-Signatur, externe Verankerung, Chain-Rotation; ergänzt die
+  bereits in M1 implementierte Basis-Hash-Chain aus `HSM-FA-AUDIT-002`).
 - `HSM-NFA-SEC-005..006` SBOM + Image-Signierung.
 - `HSM-FA-FAIL-001` voll umgesetzt (alle PKCS#11-Fehlerklassen behandelt,
   Circuit Breaker, Re-Login-Throttle, Token-Removal-Recovery,
