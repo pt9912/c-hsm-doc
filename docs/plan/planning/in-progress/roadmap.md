@@ -56,20 +56,34 @@ Java-Client ohne JNI.
   M3 gegen Produktionsprofile),
 - `HSM-NFA-SEC-005..006` SBOM + Image-Signierung (folgt in M2).
 
-**Akzeptanz M1:**
+### Definition of Done — M1
 
-- `HSM-ACCEPT-001` (Funktionale Abnahme gegen SoftHSM) ist erfüllt.
-- `HSM-ACCEPT-005` (Betriebsabnahme, Helm-Chart auf Kind-Cluster) ist
-  erfüllt.
-- Demo-Skript verschlüsselt + entschlüsselt eine 1-GiB-Datei mit
-  identischer SHA-256-Summe.
-- Java-Beispielprogramm läuft gegen den Demo-Service.
+- [ ] `HSM-ACCEPT-001` (Funktionale Abnahme gegen SoftHSM) ist erfüllt.
+- [ ] `HSM-ACCEPT-005` (Betriebsabnahme, Helm-Chart auf Kind-Cluster)
+      ist erfüllt.
+- [ ] Demo-Skript verschlüsselt + entschlüsselt eine 1-GiB-Datei mit
+      identischer SHA-256-Summe.
+- [ ] Java-Beispielprogramm läuft gegen den Demo-Service.
+- [ ] `make ci` ist mit `internal/`-Coverage ≥ 80 % grün (Bootstrap-
+      Mode deaktiviert).
+- [ ] Open-Trigger 001 (`go.sum` Strict-Mode) ist nach `done/` migriert.
+- [ ] Open-Trigger 002 (CGO-Base-Switch) ist nach `done/` migriert.
 
 **Verifikationspfad:** Integrationstests in CI gegen SoftHSM, Helm-
 Smoke-Test gegen Kind, Maven-Build-Analyse für Java-Client.
 
 **Slice-Bestand:** wird durch konkrete Slice-Pläne in
 [`next/`](../next/) bzw. [`in-progress/`](.) befüllt.
+
+### Einstiegspunkt M1
+
+Der erste M1-Slice ist als
+[`next/001-grpc-skeleton.md`](../next/001-grpc-skeleton.md) hinterlegt
+(gRPC-Skeleton mit allen vier Service-Methoden als `UNIMPLEMENTED`-
+Stubs, TLS 1.3, Health-/Ready-Endpoints, 12-Factor-Konfiguration). Er
+aktiviert Open-Trigger 001 (`go.sum` Strict-Mode) durch die ersten
+echten Imports. Geplante Folge-Slices und Aktivierungspfade siehe
+dort.
 
 ---
 
@@ -91,15 +105,20 @@ für Behörden- und regulierte Umgebungen typisch sind.
 - `HSM-FA-KEY-003` Schlüsselrotation ohne Stream-Abbruch.
 - `HSM-FA-KEY-005` + `HSM-FA-KEY-006` Key-Usage-Limits.
 
-**Akzeptanz M2:**
+### Definition of Done — M2
 
-- `HSM-ACCEPT-003` (Security-Abnahme) und `HSM-ACCEPT-004` (Audit-
-  Abnahme) sind erfüllt.
-- Manipulation eines Audit-Eintrags + vollständiger Neuschreib werden
-  vom Verify-Tool erkannt.
-- Token-Removal-Test: Service wird automatisch wieder ready, ohne Pod-
-  Restart.
-- mTLS-Test schlägt für Clients ohne gültiges Zertifikat fehl.
+- [ ] `HSM-ACCEPT-003` (Security-Abnahme) ist erfüllt.
+- [ ] `HSM-ACCEPT-004` (Audit-Abnahme) ist erfüllt.
+- [ ] Manipulation eines Audit-Eintrags wird vom Verify-Tool erkannt.
+- [ ] Vollständiger Neuschreib der Audit-Datei wird vom Verify-Tool
+      anhand der externen Verankerung erkannt.
+- [ ] Token-Removal-Test: Service wird automatisch wieder ready, ohne
+      Pod-Restart.
+- [ ] mTLS-Test schlägt für Clients ohne gültiges Zertifikat fehl.
+- [ ] SBOM (CycloneDX oder SPDX) liegt je Release vor (`HSM-NFA-SEC-005`).
+- [ ] Container-Images sind signiert (`HSM-NFA-SEC-006`).
+- [ ] Schlüsselrotation während eines aktiven Streams bricht den Stream
+      nicht ab (`HSM-FA-KEY-003`).
 
 **Verifikationspfad:** Failure-Injection-Tests, Audit-Verify-Tool,
 SBOM-Check im Release-Workflow, Image-Signaturprüfung im Deployment.
@@ -122,13 +141,19 @@ SBOM-Check im Release-Workflow, Image-Signaturprüfung im Deployment.
 - HKDF-Profil aus Spezifikation `HSM-FMT-006` für das Produktionsprofil
   validiert.
 
-**Akzeptanz M3:**
+### Definition of Done — M3
 
-- `HSM-ACCEPT-002` (Performance-Abnahme) und `HSM-ACCEPT-006`
-  (Compliance-Abnahme) sind für mindestens ein Produktionsprofil
-  erfüllt.
-- Performance-Messprotokoll mit p50/p95/p99-Latenz und Durchsatz pro
-  Profil liegt im Repository.
+- [ ] `HSM-ACCEPT-002` (Performance-Abnahme) ist für mindestens ein
+      Produktionsprofil erfüllt.
+- [ ] `HSM-ACCEPT-006` (Compliance-Abnahme) ist für dasselbe
+      Produktionsprofil erfüllt.
+- [ ] Performance-Messprotokoll mit p50/p95/p99-Latenz und Durchsatz
+      liegt pro Profil im Repository.
+- [ ] HKDF-Profil aus Spezifikation `HSM-FMT-006` ist für das
+      Produktionsprofil validiert und im Profil-Dokument festgehalten.
+- [ ] BSI-TR-02102/TR-03116-Cipher-Suite-Nachweis liegt vor.
+- [ ] HSM-Zertifizierungsnachweis (FIPS 140-3 Level 3 oder CC EAL4+)
+      ist im Profil-Dokument referenziert (`HSM-COMP-004`).
 
 **Verifikationspfad:** Profilspezifischer Test-Stack (HSM in Test-Lab),
 Performance-Benchmark als CI-Job (optional, profilspezifisch getriggert).
@@ -150,14 +175,19 @@ Service nicht für andere blockieren.
 - Mandantenspezifische Key-Lookup-Filterung (`HSM-FA-TENANT-002`)
   als Härtungs-Test.
 
-**Akzeptanz M4:**
+### Definition of Done — M4
 
-- Quota-Test rejektiert über Limit mit `RESOURCE_EXHAUSTED` +
-  `TENANT_QUOTA`.
-- Fair-Scheduling-Test (aggressiver Mandant A vs. moderater Mandant B)
-  hält p99 für B im definierten Korridor.
-- Cross-Tenant-Decrypt-Versuch schlägt mit dokumentierter Fehlerklasse
-  fehl.
+- [ ] Quota-Test rejektiert über Limit mit `RESOURCE_EXHAUSTED` +
+      `TENANT_QUOTA`.
+- [ ] Fair-Scheduling-Test (aggressiver Mandant A vs. moderater
+      Mandant B) hält p99 für B innerhalb des in
+      `HSM-FA-TENANT-005` definierten Korridors (≤ Faktor 3 ggü.
+      ungeladenem Referenz-p99).
+- [ ] Cross-Tenant-Decrypt-Versuch schlägt mit
+      `FAILED_PRECONDITION` + Fehlerklasse `KEY_NOT_FOUND` fehl und
+      wird im Audit-Log als `result=error` festgehalten.
+- [ ] `tenant_id` (oder Hash) erscheint in allen Pflicht-Metriken
+      und Audit-Einträgen (`HSM-FA-TENANT-004`).
 
 ---
 
@@ -175,21 +205,32 @@ Service nicht für andere blockieren.
 
 ## Offene Trigger und Vorabklärungen
 
-Liste lebt in [`docs/plan/planning/open/`](../open/). Heute leer
-(`open/README.md` enthält nur die Konvention). Beispiele für künftige
-Trigger:
+Liste lebt in [`docs/plan/planning/open/`](../open/). Aktueller Bestand:
+
+- [`001-gosum-strict-mode`](../open/001-gosum-strict-mode.md) — wird
+  durch den M1-Einstiegs-Slice 001 automatisch aktiviert.
+- [`002-distroless-base-fuer-cgo`](../open/002-distroless-base-fuer-cgo.md)
+  — wird durch den ersten Slice aktiviert, der `github.com/miekg/pkcs11`
+  importiert (geplant: M1-Slice 002).
+
+Beispiele für künftige Trigger, die noch keinen Eintrag haben:
 
 - Wahl des Audit-Persistenz-Backends pro Produktionsprofil (eigene ADR).
-- Wahl des Secret-Backends (Kubernetes Secret vs. Vault) – eigene ADR.
-- Wahl der CI/CD-Pipeline + Image-Registry – eigene ADR.
-- Confidential-Compute-Pfad als Mitigation für `HSM-THREAT-008` – open-Eintrag.
+- Wahl des Secret-Backends (Kubernetes Secret vs. Vault) — eigene ADR.
+- Wahl der CI/CD-Pipeline + Image-Registry — eigene ADR.
+- Confidential-Compute-Pfad als Mitigation für `HSM-THREAT-008`.
 
 ---
 
 ## Status der Roadmap
 
-- M1: noch nicht gestartet (kein Code im Repository).
-- M2–M4: nachgelagert, hängen an M1.
+| Meilenstein | Status                                                    |
+| ----------- | --------------------------------------------------------- |
+| M1          | Einstiegs-Slice 001-grpc-skeleton im Bestand von `next/`. |
+| M2          | wartet auf M1-Closure.                                    |
+| M3          | wartet auf M2-Closure und Verfügbarkeit Produktions-HSM.  |
+| M4          | wartet auf M3-Closure.                                    |
 
-Wenn M1 startet, wird dieser Abschnitt durch eine kurze Status-Tabelle
-ersetzt (Slice → Status → Owner → letzter Touchpoint).
+Sobald der erste Slice von `next/` nach `in-progress/` wandert, wird
+dieser Abschnitt um eine Slice-Tabelle ergänzt
+(Slice → Status → Owner → letzter Touchpoint).
