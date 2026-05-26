@@ -4,7 +4,7 @@
 | ----------- | ----------------------------------------------------------------------- |
 | Version     | 0.1                                                                     |
 | Datum       | 2026-05-26                                                              |
-| Bezug       | [Lastenheft](../../../spec/lastenheft.md), [Spezifikation](../../../spec/spezifikation.md), [Architektur](../../../spec/architecture.md) |
+| Bezug       | [Lastenheft](../../../../spec/lastenheft.md), [Spezifikation](../../../../spec/spezifikation.md), [Architektur](../../../../spec/architecture.md) |
 
 Lebende Übersicht der Meilensteine und ihrer Akzeptanzschnitte. Slice-
 Pläne entstehen als eigene Einträge in

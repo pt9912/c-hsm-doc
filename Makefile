@@ -29,7 +29,7 @@ COMPOSE_DEV := docker compose -f docker-compose.dev.yml
 .DEFAULT_GOAL := help
 
 .PHONY: help deps compile lint test coverage coverage-gate build run clean \
-        gates ci fullbuild govulncheck dev-softhsm dev-down
+        gates ci fullbuild govulncheck docs-check dev-softhsm dev-down
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -71,10 +71,18 @@ govulncheck: ## Run govulncheck against the project.
 	    golang:$(GO_VERSION) \
 	    sh -c "go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./..."
 
+# ---- docs gates ------------------------------------------------------------
+
+docs-check: ## Markdown link validator (docker-gekapseltes Python).
+	docker run --rm \
+	    -v "$(CURDIR)":/src -w /src \
+	    python:3.13-slim \
+	    python tools/check_refs.py
+
 # ---- aggregators -----------------------------------------------------------
 
-gates: lint test coverage-gate ## Inner-loop mandatory gates.
-	@echo "[gates] lint + test + coverage-gate green"
+gates: lint test coverage-gate docs-check ## Inner-loop mandatory gates.
+	@echo "[gates] lint + test + coverage-gate + docs-check green"
 
 ci: gates govulncheck ## Gates plus govulncheck.
 	@echo "[ci] gates + govulncheck green"
