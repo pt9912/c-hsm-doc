@@ -3,12 +3,22 @@
 #
 # Idempotent: ein erneuter Lauf läuft nicht in einen Fehler, wenn der
 # Token mit demselben Label bereits existiert.
+#
+# USER_PIN und SO_PIN MUESSEN von aussen gesetzt werden (typischerweise
+# durch docker-compose.dev.yml). Damit landet kein PIN-Default im Image-
+# Layer, der bei versehentlichem Re-Tagging in einer Prod-Registry
+# stehen koennte.
 
 set -euo pipefail
 
 TOKEN_LABEL="${TOKEN_LABEL:-c-hsm-doc-dev}"
-USER_PIN="${USER_PIN:-1234}"
-SO_PIN="${SO_PIN:-5678}"
+
+if [[ -z "${USER_PIN:-}" ]] || [[ -z "${SO_PIN:-}" ]]; then
+    echo "softhsm-init: ERROR — USER_PIN und SO_PIN MUESSEN als Env-Variablen gesetzt sein." >&2
+    echo "softhsm-init: docker-compose.dev.yml setzt sie mit Dev-Defaults; fuer manuellen" >&2
+    echo "softhsm-init: Lauf: docker run -e USER_PIN=... -e SO_PIN=... ..." >&2
+    exit 2
+fi
 
 echo "softhsm-init: Token-Label='${TOKEN_LABEL}'"
 

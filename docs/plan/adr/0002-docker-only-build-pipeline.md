@@ -85,10 +85,26 @@ Toolchain-Versionen werden als `ARG` im Dockerfile gepinnt:
 
 - `GO_VERSION`
 - `GOLANGCI_LINT_VERSION`
+- `GOVULNCHECK_VERSION` (im Makefile, da govulncheck zur Laufzeit
+  installiert wird)
 
 Routine-Updates dieser Pins benötigen keine eigene ADR; die Hebung
 wird im Commit-Body begründet. Major-Wechsel (z. B. Go 2, Wechsel des
 Lint-Tools) lösen eine Folge-ADR aus.
+
+**Digest-Pinning** (Supply-Chain-Härtung): Tag-Pins allein reichen
+nicht, weil Tags mutieren können. Der Dockerfile akzeptiert über
+zusätzliche `ARG`-Variablen vollständige `<tag>@sha256:...`-Pins:
+
+- `GO_BASE_IMAGE` (Default: `golang:${GO_VERSION}`)
+- `GOLANGCI_BASE_IMAGE` (Default: `golangci/golangci-lint:${GOLANGCI_LINT_VERSION}-alpine`)
+- `RUNTIME_BASE_IMAGE` (Default: `gcr.io/distroless/static-debian12:nonroot`)
+
+Dev-Builds nutzen die Tag-Defaults. CI-/Release-Builds MÜSSEN die
+Digest-pinned Varianten per `--build-arg` setzen. Das Makefile reicht
+diese Variablen 1:1 weiter; die Aktualisierung der Pins erfolgt vor
+jedem Release (manuell oder via Dependabot/Renovate, eigene
+Konfiguration folgt mit dem CI-Setup).
 
 ### 2.5 Bootstrap-fähiges Coverage-Gate
 

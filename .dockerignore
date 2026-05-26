@@ -40,5 +40,25 @@ client
 dev
 docker-compose.dev.yml
 
+# Defense-in-Depth-Secret-Filter (verhindert COPY-Leck bei COPY . .)
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.kdbx
+*.kdb
+id_rsa*
+id_ecdsa*
+id_ed25519*
+*_rsa
+*_ecdsa
+*_ed25519
+secrets/
+secret/
+
 # Die .dockerignore selbst wird nicht ins Image gebraucht
 .dockerignore

@@ -22,8 +22,14 @@
 ARG GO_VERSION=1.26.3
 ARG GOLANGCI_LINT_VERSION=v2.12.1
 
+# Digest-Pinning (ADR 0002 §2.4): Dev-Builds nutzen den Tag; CI/Release-
+# Builds setzen vollstaendige <tag>@sha256:...-Pins via --build-arg.
+ARG GO_BASE_IMAGE=golang:${GO_VERSION}
+ARG GOLANGCI_BASE_IMAGE=golangci/golangci-lint:${GOLANGCI_LINT_VERSION}-alpine
+ARG RUNTIME_BASE_IMAGE=gcr.io/distroless/static-debian12:nonroot
+
 # ---- deps ------------------------------------------------------------------
-FROM golang:${GO_VERSION} AS deps
+FROM ${GO_BASE_IMAGE} AS deps
 
 WORKDIR /src
 ENV GOFLAGS="-mod=readonly -buildvcs=false" \
@@ -44,7 +50,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /tmp/c-hsm-doc-server ./cmd/hsmdoc
 
 # ---- lint ------------------------------------------------------------------
-FROM golangci/golangci-lint:${GOLANGCI_LINT_VERSION}-alpine AS lint
+FROM ${GOLANGCI_BASE_IMAGE} AS lint
 
 WORKDIR /src
 COPY --from=deps /go/pkg/mod /go/pkg/mod
@@ -99,7 +105,7 @@ RUN CGO_ENABLED=0 go build \
     ./cmd/hsmdoc
 
 # ---- runtime ---------------------------------------------------------------
-FROM gcr.io/distroless/static-debian12:nonroot AS runtime
+FROM ${RUNTIME_BASE_IMAGE} AS runtime
 
 LABEL org.opencontainers.image.source="https://github.com/pt9912/c-hsm-doc" \
       org.opencontainers.image.description="c-hsm-doc — HSM-gestützte Dokumentverschlüsselung (Go-Server)." \
@@ -110,4 +116,12 @@ LABEL org.opencontainers.image.source="https://github.com/pt9912/c-hsm-doc" \
 COPY --from=build /out/c-hsm-doc-server /usr/local/bin/c-hsm-doc-server
 
 USER 65532:65532
+
+# HEALTHCHECK in exec-Form (kein Shell noetig, kompatibel mit distroless).
+# Solange cmd/hsmdoc nur Bootstrap ist, ueberprueft --version, dass das
+# Binary lauffaehig ist. M1 ersetzt das durch einen echten Health-Check
+# gegen den gRPC-Endpoint.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/usr/local/bin/c-hsm-doc-server", "--version"]
+
 ENTRYPOINT ["/usr/local/bin/c-hsm-doc-server"]

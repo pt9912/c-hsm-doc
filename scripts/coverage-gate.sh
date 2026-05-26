@@ -35,6 +35,18 @@ fi
 
 if [[ ! -s "$func_file" ]]; then
   if [[ "${COVERAGE_BOOTSTRAP:-0}" == "1" ]]; then
+    # Defense-in-depth: COVERAGE_BOOTSTRAP=1 ist kein blanker Bypass.
+    # Wenn `go` verfuegbar ist, verifizieren wir, dass ./internal/...
+    # tatsaechlich leer ist. Sobald Produktiv-Code existiert, schlaegt
+    # diese Pruefung fehl — der Env-Override allein reicht dann nicht.
+    if command -v go >/dev/null 2>&1; then
+      pkgs="$(go list ./internal/... 2>/dev/null | tr -d '[:space:]')"
+      if [[ -n "$pkgs" ]]; then
+        echo "coverage-gate: COVERAGE_BOOTSTRAP=1, aber ./internal/... enthaelt Pakete" >&2
+        echo "coverage-gate: Bypass blockiert — Bootstrap-Modus ist nur fuer leeres internal/ zulaessig" >&2
+        exit 2
+      fi
+    fi
     echo "coverage-gate: empty coverage input — bootstrap mode (threshold 0)"
     exit 0
   fi

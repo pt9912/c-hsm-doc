@@ -11,7 +11,20 @@
 IMAGE                   ?= c-hsm-doc-server
 GO_VERSION              ?= 1.26.3
 GOLANGCI_LINT_VERSION   ?= v2.12.1
+GOVULNCHECK_VERSION     ?= v1.1.4
+PYTHON_VERSION          ?= 3.13-slim
 THRESHOLD               ?= 0
+
+# Digest-Pinning fuer Supply-Chain (ADR 0002 §2.4): Default-Pfad nutzt
+# nur den Tag; Releases setzen vollstaendige <tag>@sha256:...-Strings,
+# z. B.:
+#   make ci GO_BASE_IMAGE=golang:1.26.3@sha256:abc... \
+#           GOLANGCI_BASE_IMAGE=golangci/golangci-lint:v2.12.1-alpine@sha256:def... \
+#           RUNTIME_BASE_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:ghi...
+GO_BASE_IMAGE           ?= golang:$(GO_VERSION)
+GOLANGCI_BASE_IMAGE     ?= golangci/golangci-lint:$(GOLANGCI_LINT_VERSION)-alpine
+RUNTIME_BASE_IMAGE      ?= gcr.io/distroless/static-debian12:nonroot
+PYTHON_BASE_IMAGE       ?= python:$(PYTHON_VERSION)
 
 # --no-cache-filter zwingt BuildKit, die Stage neu zu evaluieren, ohne
 # den deps-Cache zu invalidieren. Verhindert, dass stale Layer Lint-/
@@ -20,16 +33,26 @@ NO_CACHE_FILTER_TEST     := --no-cache-filter test
 NO_CACHE_FILTER_LINT     := --no-cache-filter lint
 NO_CACHE_FILTER_COVERAGE := --no-cache-filter coverage
 
-DOCKER_BUILD := docker build \
+# In CI gibt --progress=plain vollstaendige Logs; lokal bleibt der
+# default-progress (auto) fuer kompaktere Ausgabe.
+PROGRESS_FLAG :=
+ifeq ($(CI),1)
+PROGRESS_FLAG := --progress=plain
+endif
+
+DOCKER_BUILD := docker build $(PROGRESS_FLAG) \
     --build-arg GO_VERSION=$(GO_VERSION) \
-    --build-arg GOLANGCI_LINT_VERSION=$(GOLANGCI_LINT_VERSION)
+    --build-arg GOLANGCI_LINT_VERSION=$(GOLANGCI_LINT_VERSION) \
+    --build-arg GO_BASE_IMAGE=$(GO_BASE_IMAGE) \
+    --build-arg GOLANGCI_BASE_IMAGE=$(GOLANGCI_BASE_IMAGE) \
+    --build-arg RUNTIME_BASE_IMAGE=$(RUNTIME_BASE_IMAGE)
 
 COMPOSE_DEV := docker compose -f docker-compose.dev.yml
 
 .DEFAULT_GOAL := help
 
 .PHONY: help deps compile lint test coverage coverage-gate build run clean \
-        gates ci fullbuild govulncheck docs-check dev-softhsm dev-down
+        gates ci fullbuild govulncheck docs-check dev-softhsm dev-down dev-purge
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -64,19 +87,19 @@ run: build ## Smoke test: run the built image with --version.
 
 # ---- security gates --------------------------------------------------------
 
-govulncheck: ## Run govulncheck against the project.
+govulncheck: ## Run govulncheck against the project (pinned, ADR 0002 §2.4).
 	docker run --rm \
 	    -v "$(CURDIR)":/src -w /src \
 	    -e GOFLAGS=-buildvcs=false \
-	    golang:$(GO_VERSION) \
-	    sh -c "go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./..."
+	    $(GO_BASE_IMAGE) \
+	    sh -c "go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) && govulncheck ./..."
 
 # ---- docs gates ------------------------------------------------------------
 
 docs-check: ## Markdown link validator (docker-gekapseltes Python).
 	docker run --rm \
 	    -v "$(CURDIR)":/src -w /src \
-	    python:3.13-slim \
+	    $(PYTHON_BASE_IMAGE) \
 	    python tools/check_refs.py
 
 # ---- aggregators -----------------------------------------------------------
@@ -98,6 +121,10 @@ dev-softhsm: ## Initialize SoftHSM token in the local compose volume (HSM-ENV-00
 
 dev-down: ## Tear down the local compose environment (volume preserved).
 	$(COMPOSE_DEV) down
+
+dev-purge: ## Tear down compose AND remove volumes (destructive!).
+	$(COMPOSE_DEV) down --volumes
+	@echo "[dev-purge] compose environment and SoftHSM tokens removed"
 
 # ---- maintenance -----------------------------------------------------------
 

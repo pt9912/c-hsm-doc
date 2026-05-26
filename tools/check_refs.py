@@ -136,8 +136,16 @@ def _is_external_or_anchor(target: str) -> bool:
 
 
 def _check_relative_path(repo_root: Path, source: Path, path_part: str) -> str | None:
-    """Resolve `path_part` relativ zu `source.parent` und prueft Existenz."""
-    candidate = (source.parent / path_part).resolve()
+    """Resolve `path_part` relativ zu `source.parent` und prueft Existenz.
+
+    Defense-in-depth: Symlinks werden ausdruecklich abgelehnt, bevor
+    `Path.resolve()` ihnen folgen koennte. Verhindert Info-Leak ueber
+    boesartige Symlinks auf Pseudo-Dateisysteme (z. B. /proc/self/...).
+    """
+    candidate_raw = source.parent / path_part
+    if candidate_raw.is_symlink():
+        return "target is a symlink (validator refuses to follow)"
+    candidate = candidate_raw.resolve()
     try:
         candidate.relative_to(repo_root)
     except ValueError:
