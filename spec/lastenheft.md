@@ -72,6 +72,16 @@ Sofern eine Anforderung Performance, Latenz oder Durchsatz benennt, gilt – wen
 - gRPC über Loopback oder lokales 10-GbE-VLAN
 - HSM: SoftHSM v2 lokal (Funktional-Referenz) bzw. Netzwerk-HSM mit < 2 ms RTT (Performance-Referenz)
 
+### HSM-LESE-006 – SoftHSM-Abgrenzung
+
+SoftHSM v2 dient ausschließlich als funktionale Referenz für Entwicklung, Unit-Tests und Smoke-Tests im CI. SoftHSM verhält sich nicht wie ein produktives Hardware- oder Netzwerk-HSM (keine echten Sessionlimits, andere Latenz- und Fehlerprofile, keine echte Schlüsselisolation in Hardware).
+
+Es gilt:
+
+- Funktionale Abnahmen (HSM-ACCEPT-001) DÜRFEN gegen SoftHSM erbracht werden.
+- Performance-Abnahmen (HSM-ACCEPT-002), Failure-Abnahmen, Compliance-Abnahmen (HSM-ACCEPT-006) und FIPS-/CC-Nachweise (HSM-COMP-004) DÜRFEN NICHT ausschließlich gegen SoftHSM erbracht werden; sie MÜSSEN für jedes vorgesehene Produktionsprofil (HSM-TECH-006) separat nachgewiesen werden.
+- Lasttests gegen SoftHSM gelten als Code-/Architekturnachweis, nicht als Produktionsnachweis.
+
 ---
 
 ## 1. Zielbestimmung
@@ -369,6 +379,24 @@ Ein Chunk im Zustand `FAILED_TRANSIENT` MUSS mit identischer Sequenznummer und i
 
 Akzeptanz: Ein erzwungener Retry-Test zeigt monoton steigende Nonces für denselben `seq` und identischen entschlüsselten Klartext.
 
+#### HSM-FA-CHUNK-007 – Commit-Semantik
+
+Die fachliche Wirkung der Chunk-Verarbeitung wird durch genau definierte Commit-Punkte beschrieben. Ein Chunk durchläuft folgende Commits:
+
+| Commit                | Bedingung                                                            | Beobachtbar als                          |
+| --------------------- | -------------------------------------------------------------------- | ---------------------------------------- |
+| `audit-attempt`       | jeder beendete HSM-Versuch (Erfolg oder Fehler) ist in den Audit-Sink mit `attempt`-Zähler geschrieben und gemäß HSM-FA-AUDIT-010 dauerhaft | Audit-Eintrag mit `result=ok` / `error` |
+| `emit-commit`         | Ciphertext-Frame ist in den gRPC-Response-Stream geschrieben und vom Transport bestätigt | Sender-Side ACK des HTTP/2-Frames        |
+| `stream-final-commit` | Container-Trailer (HSM-FMT-003) ist erfolgreich emittiert und auf Client-Seite gelesen | erfolgreiche Stream-Schließung           |
+
+Folgende Regeln MÜSSEN gelten:
+
+- `emit-commit` darf erst nach `audit-attempt` mit `result=ok` für denselben `(seq, attempt)` erfolgen.
+- Bei Stream-Abbruch (Client-Cancel, Netzwerkfehler) vor `stream-final-commit` gilt der gesamte Container als nicht committed; der Aufrufer DARF den partiellen Container NICHT als gültig akzeptieren. Bereits emittierte Chunks bleiben kryptografisch valide, der Container ist jedoch ohne Trailer ungültig (siehe HSM-FMT-003).
+- Audit-Einträge MÜSSEN auch bei Stream-Abbruch persistiert werden, soweit ihre `audit-attempt`-Bedingung erreicht wurde. Sie dokumentieren den Abbruch zusätzlich mit Fehlerklasse `STREAM_ABORTED`.
+
+Akzeptanz: Ein Stream-Cancel-Test nach 50 von 100 Chunks zeigt: 50 erfolgreiche `audit-attempt`-Einträge, 50 `emit-commit`-Events, kein `stream-final-commit`, ein zusätzlicher Audit-Eintrag `STREAM_ABORTED`; der Java-Client liefert eine Exception statt eines gültigen Containers.
+
 ### 6.3 Streaming-Verarbeitung
 
 #### HSM-FA-STREAM-001 – Bidirektionales gRPC-Streaming
@@ -456,6 +484,20 @@ Metadaten zu logischen Schlüsseln (Key-ID, HSM-Handle/Label, Status, Erzeugungs
 
 Akzeptanz: Schlüssel-Metadaten sind über einen Read-only-Endpoint abrufbar; das Verzeichnis enthält weder Klartext-Schlüssel noch Wrap-Keys.
 
+#### HSM-FA-KEY-005 – Key-Usage-Limits (AES-GCM)
+
+Der Dienst MUSS die Anzahl der AES-GCM-Verschlüsselungsoperationen je logischer `key_id` begrenzen. Hintergrund: NIST SP 800-38D begrenzt die sichere Verwendung eines AES-GCM-Schlüssels mit zufälligen 96-Bit-Nonces aufgrund der Kollisionsschranke; eine deutlich frühere Rotation ist gängige Praxis.
+
+Pflichtwerte:
+
+- **Hard Limit** (Default): 2³² Verschlüsselungsoperationen je `key_id`. Beim Erreichen MUSS der Dienst weitere Encrypt-Anfragen für diese `key_id` mit `FAILED_PRECONDITION` und Fehlerklasse `KEY_USAGE_EXHAUSTED` ablehnen, bis eine Rotation gemäß HSM-FA-KEY-003 erfolgt ist.
+- **Soft Limit** (Default): 2³¹ Operationen (50 % des Hard Limits). Beim Erreichen MUSS eine Metrik `hsmdoc_key_usage_soft_limit_reached_total` inkrementiert und eine Rotation-Warnung im Log ausgegeben werden.
+- **Auto-Rotation** (SOLL): bei aktivierter Auto-Rotation MUSS der Dienst beim Erreichen des Soft Limits eine Rotation gemäß HSM-FA-KEY-003 selbsttätig auslösen, sofern ein Rotations-Hook konfiguriert ist.
+
+Operationszähler je `key_id` MÜSSEN persistiert oder beim Start aus dem Audit-Log rekonstruiert werden, um Resets bei Service-Restart zu vermeiden.
+
+Akzeptanz: Ein Lasttest gegen einen Test-Key mit künstlich gesenktem Hard Limit (z. B. 1000 Operationen) zeigt: Soft-Limit-Metrik wird ausgelöst, Hard-Limit führt zu Encrypt-Ablehnung, nach Rotation funktioniert Encrypt mit neuer `key_version` wieder; Operationszähler überlebt Restart.
+
 ### 6.6 Queueing und Backpressure
 
 #### HSM-FA-QUEUE-001 – Begrenzte Job-Queue
@@ -486,11 +528,20 @@ Akzeptanz: Eine Mapping-Tabelle (HSM-Fehlercode → Klasse) ist im Repository do
 
 Wiederholungen MÜSSEN mit Exponential Backoff und Jitter ausgeführt werden. Default ist Basis = 50 ms, Faktor = 2, max. 5 Versuche.
 
-#### HSM-FA-RETRY-003 – Idempotenz pro Chunk
+#### HSM-FA-RETRY-003 – Commit-Idempotenz pro Chunk
 
-Retries auf Chunk-Ebene MÜSSEN idempotent sein. Eine wiederholte Verschlüsselung desselben Klartext-Chunks mit derselben Sequenznummer DARF NICHT zu zwei verschiedenen Ciphertexten im Audit-Log führen.
+Eine Chunk-Verarbeitung gilt erst dann als committed, wenn der Ciphertext erfolgreich in den Response-Stream geschrieben (`SEALED → EMITTED`, siehe HSM-FA-CHUNK-004) und der zugehörige Audit-Eintrag persistiert (siehe HSM-FA-AUDIT-010) wurde. Nur der final erfolgreiche Versuch eines Chunks gilt als committed.
 
-Akzeptanz: Nach erzwungenem Retry zeigt das Audit-Log genau einen erfolgreichen Eintrag pro Chunk.
+Hinweis: Jeder Retry erzeugt nach HSM-FA-CHUNK-006 zwangsläufig einen neuen Ciphertext und einen neuen Authentication-Tag, weil eine neue Nonce verwendet wird. Idempotenz bezieht sich daher auf das Commit-Ergebnis (fachliche Wirkung), nicht auf die Bytefolge des Ciphertexts.
+
+Folgende Regeln MÜSSEN gelten:
+
+- Für jede Sequenznummer `seq` MUSS das Audit-Log höchstens einen Eintrag mit `result=ok` enthalten.
+- Vorausgehende fehlgeschlagene Versuche MÜSSEN als separate Audit-Einträge mit `result=error`, `error_class` und `attempt`-Zähler protokolliert werden.
+- Ciphertext eines nicht erfolgreich committeten Versuchs DARF NICHT in den Response-Stream emittiert werden.
+- Bei Stream-Abbruch vor `EMITTED` gilt der Chunk als nicht committed und liefert keinen `result=ok`-Eintrag.
+
+Akzeptanz: Nach drei erzwungenen transienten Fehlern gefolgt von einem Erfolg zeigt das Audit-Log für die betroffene `seq` genau einen `result=ok`-Eintrag und drei `result=error`-Einträge mit `attempt=1..3`; im Response-Stream erscheint genau ein Ciphertext-Chunk für diese `seq`.
 
 ### 6.8 Auditierung
 
@@ -547,6 +598,30 @@ Akzeptanz: Nach einer Rotation gibt es einen lückenlosen Verifikationspfad übe
 Audit-Zeitstempel MÜSSEN aus einer vertrauenswürdigen Zeitquelle stammen. Mindestanforderung: NTP-/chrony-synchronisierte Systemzeit mit dokumentierter Drift-Überwachung. Für regulierte Umgebungen SOLL zusätzlich ein RFC-3161-Zeitstempel je signiertem Segment (HSM-FA-AUDIT-006) eingeholt werden.
 
 Akzeptanz: Eine Zeit-Abweichung von > 1 s gegenüber NTP-Quelle löst eine Metrik `hsmdoc_time_drift_seconds` aus und wird im Service-Log gemeldet; für jedes signierte Segment der regulierten Konfiguration liegt ein RFC-3161-Token vor.
+
+#### HSM-FA-AUDIT-010 – Durability und Schreibreihenfolge
+
+Audit-Einträge MÜSSEN dauerhaft persistiert sein, bevor sie den `audit-attempt`-Commit gemäß HSM-FA-CHUNK-007 erfüllen:
+
+- Schreibvorgänge MÜSSEN append-only und in `seq`-Reihenfolge je Stream erfolgen.
+- Die Dauerhaftigkeit MUSS durch eine konfigurierbare Sync-Strategie sichergestellt werden. Zulässige Strategien:
+  - `per-entry-fsync` (Default für regulierte Umgebungen): jeder Eintrag wird vor Abschluss von `audit-attempt` über `fsync(2)` oder Backend-Äquivalent durabel gemacht.
+  - `batched-fsync` (Default für Standardumgebungen): Einträge werden in Gruppen ≤ 100 ms oder ≤ 1000 Einträge gesyncert; `audit-attempt` schließt erst nach Sync ab.
+- Bei Sync-Fehler MUSS der zugehörige Stream sofort abgebrochen werden (`STREAM_ABORTED`, Fehlerklasse `AUDIT_DURABILITY_FAILED`); der Service DARF KEINEN Ciphertext-Chunk emittieren, dessen Audit-Eintrag nicht durabel ist.
+
+Akzeptanz: Ein erzwungener Sync-Fehler (z. B. EIO) führt zum dokumentierten Stream-Abbruch; die Metrik `hsmdoc_audit_durability_failed_total` steigt.
+
+#### HSM-FA-AUDIT-011 – Zulässige Audit-Senken
+
+Zulässig sind als primäre Audit-Senken:
+
+- ein lokales append-only Dateisystem mit Dateirotation (z. B. Mode 0640, Owner = Service-User, eigenes Volume),
+- ein Object Storage mit Append- oder Versioning-Funktion und Write-Once-Read-Many-Semantik (z. B. S3 Object Lock im Compliance-Mode),
+- ein SIEM- oder Log-Ingestion-System mit nachweislicher Append-only-Garantie.
+
+Die externe Verankerungssenke (HSM-FA-AUDIT-007) MUSS organisatorisch und technisch von der primären Senke getrennt sein.
+
+Akzeptanz: Für jede unterstützte Senke existiert ein Adapter mit Durability-Test gemäß HSM-FA-AUDIT-010; der Helm-Chart-Default liegt im Repository.
 
 ### 6.9 Mandantenisolation
 
@@ -772,12 +847,32 @@ Der verschlüsselte Container MUSS mit einem Header beginnen, der mindestens ent
 - `version` (1 Byte): aktuell `0x01`
 - `cipher` (1 Byte): `0x01` für AES-256-GCM
 - `chunk_size` (4 Byte, BE): konfigurierte Chunkgröße
+- `tenant_id_hash` (16 Byte): SHA-256-gekürzter Hash der `tenant_id` (siehe HSM-FA-TENANT-001)
 - `key_id` (16 Byte): UUID des logischen Schlüssels
 - `key_version` (4 Byte, BE)
+- `stream_id` (16 Byte): UUIDv4 gemäß HSM-DATA-004
 - `header_aad_len` (2 Byte, BE) und optionale anwendungsspezifische AAD
-- `header_hmac` (32 Byte): HMAC-SHA-256 über alle vorherigen Header-Felder, mit einem aus dem HSM abgeleiteten Header-Key
+- `header_hmac` (32 Byte): HMAC-SHA-256 über alle vorherigen Header-Felder, mit Header-Key gemäß HSM-FMT-006
 
 Akzeptanz: Schemadokumentation, Encoder/Decoder und Roundtrip-Test liegen vor.
+
+#### HSM-FMT-006 – Ableitung des Header-Key
+
+Der `header_hmac`-Schlüssel (im Folgenden „Header-Key") MUSS deterministisch über HKDF-SHA-256 aus einem im HSM verwahrten Master-HMAC-Schlüssel je logischer `key_id` abgeleitet werden:
+
+```text
+header_key = HKDF-SHA-256(
+    ikm  = HSM-resident master HMAC key (CKM_GENERIC_SECRET_KEY_GEN,
+                                         CKA_EXTRACTABLE = false),
+    salt = key_id || key_version,
+    info = "c-hsm-doc/header-hmac/v1",
+    L    = 32
+)
+```
+
+Der Master-HMAC-Schlüssel MUSS pro logischer `key_id` existieren, im HSM verwahrt und nicht extrahierbar sein. Die HKDF-Ableitung MUSS ebenfalls im HSM erfolgen (`CKM_HKDF_DERIVE` oder Vendor-Äquivalent). Bei Schlüsselrotation (HSM-FA-KEY-003) MUSS auch der Master-HMAC-Schlüssel neu erzeugt und die neue `key_version` einbezogen werden.
+
+Akzeptanz: Der Header-Key verlässt das HSM nie; der Code verwendet ausschließlich PKCS#11-HMAC-Operationen über das abgeleitete Handle. Ein Versuch, den Master-HMAC-Schlüssel zu exportieren, schlägt mit `CKR_KEY_UNEXTRACTABLE` fehl.
 
 #### HSM-FMT-002 – Chunk-Frame
 
@@ -816,6 +911,20 @@ Audit-Einträge MÜSSEN ein eindeutig versioniertes Schema haben. Pflichtfelder 
 #### HSM-DATA-003 – Health-Status
 
 `HealthResponse` MUSS `serviceStatus` (`UP`/`DEGRADED`/`DOWN`), `hsmStatus` (`UP`/`DEGRADED`/`DOWN`), `sessionsActive`, `sessionsMax`, `queueDepth`, `queueCapacity` enthalten.
+
+#### HSM-DATA-004 – Stream-ID
+
+Jeder Encrypt-Stream MUSS eine `stream_id` führen, die:
+
+- als UUIDv4 vom Service beim Annehmen des Streams erzeugt wird,
+- innerhalb des Service global eindeutig ist (Kollisionswahrscheinlichkeit UUIDv4 als ausreichend angenommen),
+- mandantengebunden ist (`tenant_id` + `stream_id` bildet den fachlichen Schlüssel; cross-tenant-Verwendung ist verboten),
+- in den Pro-Chunk-AAD (HSM-FA-ENC-005) und in den Container-Header (HSM-FMT-001) einfließt,
+- in jedem Audit-Eintrag (HSM-FA-AUDIT-001), in Tracing-Spans (HSM-NFA-OBS-004) und in Strukturierten Logs (HSM-NFA-OBS-002) erscheint.
+
+Die `stream_id` DARF NICHT als Nonce-Material wiederverwendet werden; die Nonce-Strategie folgt ausschließlich HSM-FA-ENC-004.
+
+Akzeptanz: Jeder Stream im Roundtrip-Test trägt eine eindeutige `stream_id`; ein Chunk eines Streams scheitert bei der Tag-Verifikation, wenn er im Container-Header eines anderen Streams platziert wird.
 
 ---
 
