@@ -58,16 +58,19 @@ Java-Client ohne JNI.
 
 ### Definition of Done — M1
 
-- [ ] `HSM-ACCEPT-001` (Funktionale Abnahme gegen SoftHSM) ist erfüllt.
-- [ ] `HSM-ACCEPT-005` (Betriebsabnahme, Helm-Chart auf Kind-Cluster)
-      ist erfüllt.
-- [ ] Demo-Skript verschlüsselt + entschlüsselt eine 1-GiB-Datei mit
-      identischer SHA-256-Summe.
-- [ ] Java-Beispielprogramm läuft gegen den Demo-Service.
-- [ ] `make ci` ist mit `internal/`-Coverage ≥ 80 % grün (Bootstrap-
-      Mode deaktiviert).
-- [ ] Open-Trigger 001 (`go.sum` Strict-Mode) ist nach `done/` migriert.
-- [ ] Open-Trigger 002 (CGO-Base-Switch) ist nach `done/` migriert.
+Status-Konvention: `[ ]` = offen, `[x]` = erledigt. Tabellen-Checkboxen
+rendern in GitHub nicht interaktiv; Status wird im PR-Commit gepflegt,
+der den DoD-Punkt erfüllt.
+
+| DoD   | Kennung    | Beschreibung                                                 | Belegtyp                          | Bezug                                              |
+| ----- | ---------- | ------------------------------------------------------------ | --------------------------------- | -------------------------------------------------- |
+| `[ ]` | `M1-DoD-01` | Funktionale Abnahme gegen SoftHSM erfüllt                    | Integrationstest in CI            | `HSM-ACCEPT-001`                                   |
+| `[ ]` | `M1-DoD-02` | Betriebsabnahme (Helm-Chart auf Kind-Cluster) erfüllt        | Helm-Smoke-Test                   | `HSM-ACCEPT-005`                                   |
+| `[ ]` | `M1-DoD-03` | 1-GiB-Demo: Encrypt-Decrypt mit identischer SHA-256-Summe    | `demo/encrypt-decrypt.sh`         | `HSM-MVP-001`                                      |
+| `[ ]` | `M1-DoD-04` | Java-Beispielprogramm läuft gegen Demo-Service               | `examples/`-Modul + Live-Lauf     | `HSM-MVP-006`, `HSM-API-JAVA-001`                  |
+| `[ ]` | `M1-DoD-05` | `make ci` grün mit `internal/`-Coverage ≥ 80 % (kein Bootstrap) | CI-Job-Status                     | ADR 0002 §2.5                                      |
+| `[ ]` | `M1-DoD-06` | Open-Trigger 001 (`go.sum` Strict-Mode) nach `done/` migriert | Repo-State                        | [`open/001`](../open/001-gosum-strict-mode.md)     |
+| `[ ]` | `M1-DoD-07` | Open-Trigger 002 (CGO-Base-Switch) nach `done/` migriert      | Repo-State                        | [`open/002`](../open/002-distroless-base-fuer-cgo.md) |
 
 **Verifikationspfad:** Integrationstests in CI gegen SoftHSM, Helm-
 Smoke-Test gegen Kind, Maven-Build-Analyse für Java-Client.
@@ -107,18 +110,17 @@ für Behörden- und regulierte Umgebungen typisch sind.
 
 ### Definition of Done — M2
 
-- [ ] `HSM-ACCEPT-003` (Security-Abnahme) ist erfüllt.
-- [ ] `HSM-ACCEPT-004` (Audit-Abnahme) ist erfüllt.
-- [ ] Manipulation eines Audit-Eintrags wird vom Verify-Tool erkannt.
-- [ ] Vollständiger Neuschreib der Audit-Datei wird vom Verify-Tool
-      anhand der externen Verankerung erkannt.
-- [ ] Token-Removal-Test: Service wird automatisch wieder ready, ohne
-      Pod-Restart.
-- [ ] mTLS-Test schlägt für Clients ohne gültiges Zertifikat fehl.
-- [ ] SBOM (CycloneDX oder SPDX) liegt je Release vor (`HSM-NFA-SEC-005`).
-- [ ] Container-Images sind signiert (`HSM-NFA-SEC-006`).
-- [ ] Schlüsselrotation während eines aktiven Streams bricht den Stream
-      nicht ab (`HSM-FA-KEY-003`).
+| DoD   | Kennung    | Beschreibung                                                          | Belegtyp                          | Bezug                              |
+| ----- | ---------- | --------------------------------------------------------------------- | --------------------------------- | ---------------------------------- |
+| `[ ]` | `M2-DoD-01` | Security-Abnahme erfüllt                                              | mTLS-Reject-Test + PIN-Scan       | `HSM-ACCEPT-003`                   |
+| `[ ]` | `M2-DoD-02` | Audit-Abnahme erfüllt                                                 | Verify-Tool-Lauf                  | `HSM-ACCEPT-004`                   |
+| `[ ]` | `M2-DoD-03` | Manipulation eines Audit-Eintrags wird vom Verify-Tool erkannt         | Failure-Injection-Test            | `HSM-FA-AUDIT-002`                 |
+| `[ ]` | `M2-DoD-04` | Vollständiger Audit-Datei-Neuschreib wird über externe Verankerung erkannt | Verify-Tool gegen TSA/Rekor       | `HSM-FA-AUDIT-007`                 |
+| `[ ]` | `M2-DoD-05` | Token-Removal-Test: Service wieder ready ohne Pod-Restart              | Failure-Injection in Kind         | `HSM-FA-FAIL-001`, `HSM-FA-FAIL-006` |
+| `[ ]` | `M2-DoD-06` | mTLS-Reject-Test: Client ohne Zertifikat → `UNAUTHENTICATED`           | Integrationstest                  | `HSM-API-GRPC-003`                 |
+| `[ ]` | `M2-DoD-07` | SBOM (CycloneDX oder SPDX) liegt je Release vor                        | Release-Artefakt im Repo          | `HSM-NFA-SEC-005`                  |
+| `[ ]` | `M2-DoD-08` | Container-Images signiert (cosign)                                     | Signaturprüfung im Deployment     | `HSM-NFA-SEC-006`                  |
+| `[ ]` | `M2-DoD-09` | Schlüsselrotation während aktivem Stream bricht Stream nicht ab        | Rotation-Test gegen laufenden Stream | `HSM-FA-KEY-003`                |
 
 **Verifikationspfad:** Failure-Injection-Tests, Audit-Verify-Tool,
 SBOM-Check im Release-Workflow, Image-Signaturprüfung im Deployment.
@@ -143,17 +145,14 @@ SBOM-Check im Release-Workflow, Image-Signaturprüfung im Deployment.
 
 ### Definition of Done — M3
 
-- [ ] `HSM-ACCEPT-002` (Performance-Abnahme) ist für mindestens ein
-      Produktionsprofil erfüllt.
-- [ ] `HSM-ACCEPT-006` (Compliance-Abnahme) ist für dasselbe
-      Produktionsprofil erfüllt.
-- [ ] Performance-Messprotokoll mit p50/p95/p99-Latenz und Durchsatz
-      liegt pro Profil im Repository.
-- [ ] HKDF-Profil aus Spezifikation `HSM-FMT-006` ist für das
-      Produktionsprofil validiert und im Profil-Dokument festgehalten.
-- [ ] BSI-TR-02102/TR-03116-Cipher-Suite-Nachweis liegt vor.
-- [ ] HSM-Zertifizierungsnachweis (FIPS 140-3 Level 3 oder CC EAL4+)
-      ist im Profil-Dokument referenziert (`HSM-COMP-004`).
+| DoD   | Kennung    | Beschreibung                                                            | Belegtyp                          | Bezug                              |
+| ----- | ---------- | ----------------------------------------------------------------------- | --------------------------------- | ---------------------------------- |
+| `[ ]` | `M3-DoD-01` | Performance-Abnahme für mindestens ein Produktionsprofil erfüllt         | Benchmark-Messprotokoll           | `HSM-ACCEPT-002`                   |
+| `[ ]` | `M3-DoD-02` | Compliance-Abnahme für dasselbe Produktionsprofil erfüllt                | Konfigurations- + Test-Beleg      | `HSM-ACCEPT-006`                   |
+| `[ ]` | `M3-DoD-03` | Performance-Messprotokoll (p50/p95/p99-Latenz + Durchsatz) liegt vor    | Messprotokoll pro Profil im Repo  | `HSM-NFA-PERF-001..004`            |
+| `[ ]` | `M3-DoD-04` | HKDF-Profil für Produktionsprofil validiert (Profil A/B/C aus FMT-006)  | Profil-Dokument + Smoke-Test      | `HSM-FMT-006`                      |
+| `[ ]` | `M3-DoD-05` | BSI-Cipher-Suite-Nachweis liegt vor                                      | TLS-Konfig + TR-Cipher-Mapping    | `HSM-COMP-001`, `HSM-COMP-002`     |
+| `[ ]` | `M3-DoD-06` | HSM-Zertifizierungsnachweis (FIPS 140-3 L3 oder CC EAL4+) referenziert   | Profil-Dokument mit Verweis       | `HSM-COMP-004`                     |
 
 **Verifikationspfad:** Profilspezifischer Test-Stack (HSM in Test-Lab),
 Performance-Benchmark als CI-Job (optional, profilspezifisch getriggert).
@@ -177,17 +176,12 @@ Service nicht für andere blockieren.
 
 ### Definition of Done — M4
 
-- [ ] Quota-Test rejektiert über Limit mit `RESOURCE_EXHAUSTED` +
-      `TENANT_QUOTA`.
-- [ ] Fair-Scheduling-Test (aggressiver Mandant A vs. moderater
-      Mandant B) hält p99 für B innerhalb des in
-      `HSM-FA-TENANT-005` definierten Korridors (≤ Faktor 3 ggü.
-      ungeladenem Referenz-p99).
-- [ ] Cross-Tenant-Decrypt-Versuch schlägt mit
-      `FAILED_PRECONDITION` + Fehlerklasse `KEY_NOT_FOUND` fehl und
-      wird im Audit-Log als `result=error` festgehalten.
-- [ ] `tenant_id` (oder Hash) erscheint in allen Pflicht-Metriken
-      und Audit-Einträgen (`HSM-FA-TENANT-004`).
+| DoD   | Kennung    | Beschreibung                                                            | Belegtyp                          | Bezug                              |
+| ----- | ---------- | ----------------------------------------------------------------------- | --------------------------------- | ---------------------------------- |
+| `[ ]` | `M4-DoD-01` | Quota-Überschreitung → `RESOURCE_EXHAUSTED` + Fehlerklasse `TENANT_QUOTA` | Quota-Test                        | `HSM-FA-TENANT-003`                |
+| `[ ]` | `M4-DoD-02` | Fair-Scheduling: p99 für moderaten Mandanten ≤ Faktor 3 ggü. Referenz   | Synthetischer Lasttest A vs. B    | `HSM-FA-TENANT-005`                |
+| `[ ]` | `M4-DoD-03` | Cross-Tenant-Decrypt → `FAILED_PRECONDITION` + `KEY_NOT_FOUND`, im Audit als `result=error` | Negativ-Integrationstest          | `HSM-FA-TENANT-002`, `HSM-FA-AUDIT-001` |
+| `[ ]` | `M4-DoD-04` | `tenant_id` (oder Hash) in allen Pflicht-Metriken und Audit-Einträgen   | Metrik-/Audit-Stichprobe          | `HSM-FA-TENANT-004`, `HSM-FA-TENANT-006` |
 
 ---
 
