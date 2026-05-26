@@ -51,13 +51,13 @@ Ein ADR allein genügt nur für `ARCH-*`- und `PRINC-*`-Anforderungen.
 IDs folgen dem Muster `HSM-<Bereich>-<NNN>` mit dreistelliger Nummer. Bereiche umfassen:
 
 `LESE`, `ZB`, `PE`, `PUE`, `MVP`, `NONGOAL`,
-`FA-ENC`, `FA-DEC`, `FA-CHUNK`, `FA-STREAM`, `FA-HSM`, `FA-KEY`, `FA-QUEUE`, `FA-RETRY`, `FA-AUDIT`,
+`FA-ENC`, `FA-DEC`, `FA-CHUNK`, `FA-STREAM`, `FA-HSM`, `FA-KEY`, `FA-QUEUE`, `FA-RETRY`, `FA-AUDIT`, `FA-TENANT`, `FA-FAIL`,
 `API-JAVA`, `API-GRPC`, `API-P11`, `API-CFG`,
 `FMT`, `DATA`,
 `NFA-PERF`, `NFA-SCALE`, `NFA-HA`, `NFA-SEC`, `NFA-PRIV`, `NFA-MEM`, `NFA-OBS`, `NFA-OPS`, `NFA-MAINT`, `NFA-PORT`,
 `ARCH`, `PRINC`, `CC`,
 `TECH`, `ENV`, `OPS-MON`, `OPS-HC`, `OPS-CFG`,
-`COMP`, `RISK`, `ASSUMP`, `ACCEPT`, `MENGE`, `GLOSS`, `REF`.
+`COMP`, `THREAT`, `RISK`, `ASSUMP`, `ACCEPT`, `MENGE`, `GLOSS`, `REF`.
 
 ### HSM-LESE-004 – Verhältnis zu einem Pflichtenheft
 
@@ -287,9 +287,17 @@ Akzeptanz: Statistischer Test über 10⁶ Nonces einer Session zeigt keine Kolli
 
 #### HSM-FA-ENC-005 – Authenticated Additional Data
 
-Der Dienst MUSS Additional Authenticated Data (AAD) je Stream unterstützen. Der Container-Header (siehe HSM-FMT-001) MUSS in die AAD jedes Chunks einfließen.
+Der Dienst MUSS Additional Authenticated Data (AAD) je Stream unterstützen. Der Container-Header (siehe HSM-FMT-001) MUSS in die AAD jedes Chunks einfließen. Pro-Chunk-AAD MUSS zusätzlich `key_id`, `key_version`, `seq` und `stream_id` enthalten, sodass ein Chunk außerhalb seines Streams nicht erfolgreich entschlüsselt werden kann.
 
-Akzeptanz: Manipulation des Container-Headers nach der Verschlüsselung führt beim Entschlüsseln zu `CKR_GENERAL_ERROR` bzw. einer Tag-Verifikations-Fehlermeldung.
+Akzeptanz: Manipulation des Container-Headers oder der Pro-Chunk-AAD-Felder nach der Verschlüsselung führt beim Entschlüsseln zu `CKR_GENERAL_ERROR` bzw. einer Tag-Verifikations-Fehlermeldung. Ein in einen anderen Container kopierter Chunk schlägt bei der Tag-Verifikation fehl.
+
+#### HSM-FA-ENC-006 – AEAD-Granularität pro Chunk
+
+Jeder Chunk MUSS eine eigenständige AES-GCM-Operation mit eigenem 96-Bit-Nonce und eigenem 128-Bit-Authentication-Tag darstellen. Ein durchgehender (Multipart-)GCM-Stream über mehrere Chunks oder mehrere PKCS#11-Calls DARF NICHT verwendet werden.
+
+Begründung: Stream-übergreifendes GCM bindet den Tag an die Gesamtlänge und macht streamingbasierte Cancellation, Retry und parallele Chunk-Verarbeitung sicherheitsrelevant fehleranfällig.
+
+Akzeptanz: Codepfad führt je Chunk genau einen `C_EncryptInit`/`C_Encrypt`-Aufruf (oder Vendor-Äquivalent) aus; eine Code-Inspektion und ein PKCS#11-Trace-Test belegen, dass keine `C_EncryptUpdate`-Ketten über Chunk-Grenzen hinweg verwendet werden.
 
 #### HSM-FA-DEC-001 – Entschlüsselung als Inverse
 
@@ -329,6 +337,38 @@ Chunks MÜSSEN in derselben Reihenfolge wieder ausgegeben werden, in der sie ver
 
 Akzeptanz: Jeder Chunk-Header trägt eine Sequenznummer; eine vertauschte Sequenz führt zu Decrypt-Abbruch mit definierter Fehlerklasse.
 
+#### HSM-FA-CHUNK-004 – Chunk-Zustandsmodell
+
+Jeder Chunk MUSS pro Stream einen der folgenden Zustände einnehmen und MUSS deterministisch zwischen ihnen wechseln:
+
+```text
+PENDING  --> ASSIGNED  --> IN_HSM  --> SEALED  --> EMITTED
+                              |
+                              +-----> FAILED_TRANSIENT --> ASSIGNED (Retry)
+                              +-----> FAILED_PERMANENT --> STREAM_ABORT
+```
+
+- `PENDING`: aus dem Klartext-Stream gelesen, Sequenznummer zugewiesen, nicht verarbeitet.
+- `ASSIGNED`: einem Worker zugeteilt.
+- `IN_HSM`: HSM-Operation läuft.
+- `SEALED`: Ciphertext und Tag vorhanden, noch nicht emittiert.
+- `EMITTED`: in den gRPC-Response-Stream geschrieben.
+- `FAILED_TRANSIENT` / `FAILED_PERMANENT`: gemäß HSM-FA-RETRY-001.
+
+Akzeptanz: State-Übergänge sind als Enum/Konstanten im Code definiert, Übergangsregeln werden durch Unit-Tests abgedeckt, und jeder Zustandswechsel wird als Tracing-Event mit `chunk.seq` und `stream_id` exportiert.
+
+#### HSM-FA-CHUNK-005 – Parallele Verarbeitung und Reordering
+
+Chunks DÜRFEN parallel im Worker-Pool verarbeitet werden und DÜRFEN out-of-order in den Zustand `SEALED` wechseln. Die Emission (`SEALED → EMITTED`) MUSS jedoch strikt in `seq`-Reihenfolge erfolgen.
+
+Akzeptanz: Ein Reorder-Buffer puffert frühe SEALED-Chunks bis ihr direkter Vorgänger emittiert ist; die Puffertiefe entspricht maximal der Worker-Pool-Größe und wird als Metrik `hsmdoc_reorder_buffer_depth` exportiert.
+
+#### HSM-FA-CHUNK-006 – Retry-Semantik
+
+Ein Chunk im Zustand `FAILED_TRANSIENT` MUSS mit identischer Sequenznummer und identischem Klartext-Inhalt wiederholt werden. Bei jedem Retry MUSS eine neue Nonce erzeugt werden (siehe HSM-FA-ENC-004); die vorherige Nonce DARF NICHT wiederverwendet werden.
+
+Akzeptanz: Ein erzwungener Retry-Test zeigt monoton steigende Nonces für denselben `seq` und identischen entschlüsselten Klartext.
+
 ### 6.3 Streaming-Verarbeitung
 
 #### HSM-FA-STREAM-001 – Bidirektionales gRPC-Streaming
@@ -345,9 +385,18 @@ Akzeptanz: Ein Client mit langsamem Empfang verursacht keinen unbegrenzten Speic
 
 #### HSM-FA-STREAM-003 – Cancellation
 
-Der Dienst MUSS Stream-Cancellation durch den Client innerhalb von ≤ 1 s nach Eingang verarbeiten und alle Ressourcen (Worker, Sessions, Puffer) freigeben.
+Bei Cancellation eines Streams durch den Client (gRPC `CANCELLED`, Verbindungsabbruch oder lokales Timeout) MUSS der Dienst:
 
-Akzeptanz: Cancel-Test bricht 100 parallele Streams ab; Session- und Worker-Pool-Metriken kehren binnen 1 s in den Ruhestand zurück.
+1. binnen ≤ 100 ms keine neuen HSM-Operationen für diesen Stream mehr starten,
+2. den Klartext-Reader und den Response-Writer schließen,
+3. Reorder-Buffer, Worker-Slots und stream-eigene Puffer freigeben,
+4. alle bereits an das HSM übergebenen Operationen entweder regulär beenden lassen oder, wenn der PKCS#11-Adapter eine sichere Abbruchsemantik bietet (z. B. `C_CancelFunction` oder Vendor-Erweiterung), abbrechen.
+
+PKCS#11 garantiert KEIN synchrones Abbrechen laufender HSM-Operationen. Eine im HSM laufende `C_Encrypt`-Operation wird daher ggf. zu Ende geführt; ihr Ergebnis wird verworfen.
+
+Sessions, die nach Abschluss der laufenden Operation in einem undefinierten Zustand verbleiben, MÜSSEN aus dem Session-Pool entfernt und durch eine neu eingerichtete Session ersetzt werden, bevor sie wieder verwendet werden.
+
+Akzeptanz: Cancel-Test bricht 100 parallele Streams ab. Innerhalb von 100 ms werden keine neuen `C_Encrypt`-Aufrufe für diese Streams beobachtet (PKCS#11-Trace). Bereits laufende HSM-Operationen werden binnen ihrer typischen Laufzeit beendet; danach kehren Session- und Worker-Pool-Metriken in den Ruhestand zurück. Sessions, die im Verlauf des Cancels einen Fehlerzustand melden, werden ersetzt und nicht weiterverwendet.
 
 #### HSM-FA-STREAM-004 – Wiederaufnahme (KANN)
 
@@ -451,9 +500,11 @@ Jeder Audit-Eintrag MUSS mindestens folgende Felder enthalten: `timestamp` (UTC,
 
 #### HSM-FA-AUDIT-002 – Revisionssicherheit
 
-Audit-Einträge MÜSSEN append-only und manipulationsgeschützt geschrieben werden. Der Schutz MUSS mindestens eine Hash-Chain (jeder Eintrag enthält den Hash des Vorgängers) und SOLL eine Signatur über einen HSM-Signaturschlüssel umfassen.
+Audit-Einträge MÜSSEN append-only und manipulationsgeschützt geschrieben werden. Der Schutz MUSS mindestens eine Hash-Chain (jeder Eintrag enthält den Hash des Vorgängers) umfassen.
 
-Akzeptanz: Manipulation eines beliebigen Eintrags wird durch ein automatisches Verify-Tool erkannt.
+Hinweis: Eine Hash-Chain allein verhindert keinen vollständigen Neuschreib der Log-Datei. Sie wird daher durch HSM-FA-AUDIT-006 (Signatur), HSM-FA-AUDIT-007 (externe Verankerung), HSM-FA-AUDIT-008 (Chain-Rotation) und HSM-FA-AUDIT-009 (Zeitstempelquelle) ergänzt; erst deren Zusammenspiel ergibt Revisionssicherheit im Sinne typischer Aufsichtsanforderungen.
+
+Akzeptanz: Manipulation eines beliebigen Eintrags wird durch ein automatisches Verify-Tool erkannt; ein vollständiger Neuschreib der Datei wird durch die Verankerungsprüfung gemäß HSM-FA-AUDIT-007 erkannt.
 
 #### HSM-FA-AUDIT-003 – Klartextverbot
 
@@ -468,6 +519,142 @@ Die Aufbewahrungsfrist MUSS konfigurierbar sein; Default ist 365 Tage, Minimum 9
 #### HSM-FA-AUDIT-005 – Export-Format
 
 Audit-Logs MÜSSEN im JSON-Lines-Format exportierbar sein und ein optionales Begleit-Manifest mit Hash-Chain-Endwert tragen.
+
+#### HSM-FA-AUDIT-006 – Signatur der Audit-Segmente
+
+Audit-Einträge MÜSSEN in zeitlich oder mengenmäßig begrenzten Segmenten gebündelt werden (Default: alle 5 min oder alle 10 000 Einträge, je nachdem was zuerst eintritt). Jedes abgeschlossene Segment MUSS mit einem im HSM verwahrten Signaturschlüssel signiert werden.
+
+Akzeptanz: Eine Manipulation innerhalb eines abgeschlossenen Segments lässt die Segmentsignatur ungültig werden; das Verify-Tool meldet das betroffene Segment eindeutig.
+
+#### HSM-FA-AUDIT-007 – Externe Verankerung
+
+Der Endwert der Hash-Chain SOLL regelmäßig (Default: stündlich) extern verankert werden. Zulässige Verankerungssenken sind mindestens eine der folgenden, konfigurierbar:
+
+- ein zweiter, organisatorisch getrennter Append-only-Log (z. B. SIEM, dediziertes Verankerungs-Repository),
+- ein RFC-3161-Zeitstempeldienst (TSA),
+- ein Transparency-Log (z. B. Sigstore Rekor).
+
+Akzeptanz: Das Verify-Tool kann anhand des externen Verankerungsbelegs den letzten verankerten Chain-Endwert nachweisen; ein vollständiger Neuschreib der Audit-Datei wird erkannt, weil der neu berechnete Chain-Endwert nicht mit der externen Verankerung übereinstimmt.
+
+#### HSM-FA-AUDIT-008 – Chain-Rotation
+
+Die Hash-Chain MUSS rotierbar sein: nach Erreichen einer konfigurierbaren Größe (Default 1 GiB) oder eines Zeitfensters (Default 30 Tage) wird ein neuer Chain-Abschnitt begonnen. Der letzte Hash und die letzte Segmentsignatur des alten Abschnitts MÜSSEN als erster Eintrag des neuen Abschnitts referenziert und unabhängig verankert werden.
+
+Akzeptanz: Nach einer Rotation gibt es einen lückenlosen Verifikationspfad über die Abschnittsgrenze hinweg; das Verify-Tool durchläuft alle Abschnitte einer Aufbewahrungsperiode ohne Bruch.
+
+#### HSM-FA-AUDIT-009 – Zeitstempelquelle
+
+Audit-Zeitstempel MÜSSEN aus einer vertrauenswürdigen Zeitquelle stammen. Mindestanforderung: NTP-/chrony-synchronisierte Systemzeit mit dokumentierter Drift-Überwachung. Für regulierte Umgebungen SOLL zusätzlich ein RFC-3161-Zeitstempel je signiertem Segment (HSM-FA-AUDIT-006) eingeholt werden.
+
+Akzeptanz: Eine Zeit-Abweichung von > 1 s gegenüber NTP-Quelle löst eine Metrik `hsmdoc_time_drift_seconds` aus und wird im Service-Log gemeldet; für jedes signierte Segment der regulierten Konfiguration liegt ein RFC-3161-Token vor.
+
+### 6.9 Mandantenisolation
+
+#### HSM-FA-TENANT-001 – Tenant als erstklassiges Konzept
+
+Der Dienst MUSS Mandanten (`tenant_id`) als erstklassiges Konzept führen. `tenant_id` MUSS aus dem mTLS-Subject, einem Token-Claim oder einem expliziten gRPC-Header abgeleitet werden und MUSS für jeden Stream eindeutig zugeordnet sein.
+
+Akzeptanz: Requests ohne auflösbare `tenant_id` werden mit `UNAUTHENTICATED` bzw. `FAILED_PRECONDITION` abgelehnt; die Mapping-Regel ist konfigurierbar und dokumentiert.
+
+#### HSM-FA-TENANT-002 – Schlüsseltrennung
+
+Ein Mandant DARF NICHT auf Schlüssel anderer Mandanten zugreifen. Die Schlüsselauflösung (siehe HSM-FA-DEC-003) MUSS `tenant_id` als Pflichtfilter einsetzen.
+
+Akzeptanz: Ein Decrypt-Versuch mit einer Key-ID eines fremden Mandanten schlägt mit `FAILED_PRECONDITION` und Fehlerklasse `KEY_NOT_FOUND` fehl; ein Audit-Eintrag mit Resultat `error` wird geschrieben.
+
+#### HSM-FA-TENANT-003 – Quotas pro Mandant
+
+Der Dienst MUSS pro Mandant konfigurierbare Quotas für mindestens folgende Größen unterstützen: maximale parallele Streams, maximale Queue-Tiefe, maximale Sessions im Session-Pool, maximaler Durchsatz pro Zeitfenster.
+
+Akzeptanz: Quota-Überschreitung führt zu `RESOURCE_EXHAUSTED` mit Fehlerklasse `TENANT_QUOTA`; eine Mandanten-Übersicht ist als Metrik (`hsmdoc_tenant_*`) verfügbar.
+
+#### HSM-FA-TENANT-004 – Fair Scheduling
+
+Der Worker-Pool MUSS Mandanten fair bedienen. Ein einzelner Mandant DARF NICHT den gesamten Pool oder die gesamte HSM-Session-Kapazität dauerhaft monopolisieren.
+
+Akzeptanz: Ein synthetischer Lasttest mit einem aggressiven Mandanten (Mandant A: ≥ 1000 Streams) und einem moderaten Mandanten (Mandant B: 10 Streams) zeigt für Mandant B eine p99-Latenz, die das p99 ohne A-Last um nicht mehr als Faktor 3 überschreitet.
+
+#### HSM-FA-TENANT-005 – Mandantenkontext in Audit und Telemetrie
+
+`tenant_id` MUSS in jedem Audit-Eintrag und in den Tenant-relevanten Metriken/Spans enthalten sein. In Metrik-Labels SOLL ein Hash der `tenant_id` verwendet werden, sofern Klartext-IDs personenbezogen oder geschäftskritisch sind.
+
+### 6.10 HSM Failure Semantics
+
+#### HSM-FA-FAIL-001 – Fehlerklassen-Mapping PKCS#11
+
+Der Dienst MUSS PKCS#11-Returncodes auf interne Fehlerklassen mappen. Mindestens folgende Codes MÜSSEN behandelt werden:
+
+| PKCS#11-Returncode               | Fehlerklasse                | Reaktion                                                  |
+| -------------------------------- | --------------------------- | --------------------------------------------------------- |
+| `CKR_OK`                         | –                           | Erfolg                                                    |
+| `CKR_SESSION_HANDLE_INVALID`     | `SESSION_INVALID`           | Session verwerfen, neue Session anfordern, Chunk-Retry    |
+| `CKR_SESSION_CLOSED`             | `SESSION_INVALID`           | wie oben                                                  |
+| `CKR_DEVICE_ERROR`               | `HSM_DEVICE_ERROR`          | Session verwerfen, Circuit Breaker prüfen, Chunk-Retry    |
+| `CKR_DEVICE_REMOVED`             | `HSM_REMOVED`               | Pool drainen, Readiness rot, Reconnect-Schleife           |
+| `CKR_TOKEN_NOT_PRESENT`          | `HSM_TOKEN_GONE`            | wie `CKR_DEVICE_REMOVED`                                  |
+| `CKR_FUNCTION_FAILED`            | `HSM_FUNCTION_FAILED`       | Session verwerfen, Chunk-Retry (mit Klassifikation)       |
+| `CKR_GENERAL_ERROR`              | `HSM_GENERAL_ERROR`         | Session verwerfen, Chunk-Retry, Counter `permanent` prüfen |
+| `CKR_USER_NOT_LOGGED_IN`         | `HSM_NOT_LOGGED_IN`         | Re-Login gemäß Policy, dann Chunk-Retry                   |
+| `CKR_PIN_INCORRECT`              | `HSM_PIN_INVALID`           | Permanenter Fehler, Readiness rot, Alarmierung            |
+| `CKR_KEY_HANDLE_INVALID`         | `KEY_HANDLE_STALE`          | Key-Cache invalidieren, Handle neu auflösen, Chunk-Retry  |
+| `CKR_MECHANISM_INVALID`          | `MECHANISM_MISSING`         | Permanenter Konfigurationsfehler, Start abbrechen / Stream abbrechen |
+| `CKR_BUFFER_TOO_SMALL`           | `INTERNAL`                  | Programmfehler, Chunk-Abbruch, Bug-Report                 |
+| `CKR_DATA_INVALID`/`CKR_ENCRYPTED_DATA_INVALID` | `TAG_MISMATCH` | Stream-Abbruch (siehe HSM-FA-DEC-002)                    |
+| sonstige `CKR_*`                 | `HSM_UNKNOWN`               | als `permanent` behandeln                                 |
+
+Akzeptanz: Die Mapping-Tabelle liegt als Code-Konstante und als Unit-Test-Fixture vor; jeder Eintrag wird durch mindestens einen Test exerziert (Mock-PKCS#11-Modul).
+
+#### HSM-FA-FAIL-002 – Session-Lebenszyklus bei Fehlern
+
+Eine Session, die einen Fehler aus den Klassen `SESSION_INVALID`, `HSM_DEVICE_ERROR`, `HSM_FUNCTION_FAILED`, `HSM_GENERAL_ERROR` oder `KEY_HANDLE_STALE` zurückgeliefert hat, MUSS unmittelbar aus dem Pool entfernt und durch eine neu eingerichtete Session ersetzt werden.
+
+Akzeptanz: Ein Fehlertest setzt nacheinander jede dieser Klassen auf einer Session; die Metrik `hsmdoc_sessions_recycled_total` steigt entsprechend; die Sessionanzahl im Pool bleibt stabil.
+
+#### HSM-FA-FAIL-003 – Circuit Breaker
+
+Der Dienst MUSS pro HSM-Quelle (Slot/Modul) einen Circuit Breaker bereitstellen. Bei einer konfigurierbaren Fehlerrate (Default ≥ 50 % über ein 30-s-Fenster) öffnet der Breaker, Readiness MUSS auf rot wechseln, neue Streams werden mit `UNAVAILABLE` abgelehnt, bestehende Streams werden nach HSM-FA-STREAM-003 abgebrochen.
+
+Akzeptanz: Ein simulierter HSM-Ausfall öffnet den Breaker innerhalb des Fensters; `/readyz` liefert nicht-ready; nach Erholung der HSM-Quelle schließt der Breaker nach einer halben-offenen Probe.
+
+#### HSM-FA-FAIL-004 – HSM-Reboot und Token-Removal
+
+Bei `CKR_DEVICE_REMOVED` oder `CKR_TOKEN_NOT_PRESENT` MUSS der Dienst:
+
+1. den Session-Pool für die betroffene Quelle drainen,
+2. den Circuit Breaker öffnen,
+3. eine Reconnect-Schleife mit Exponential Backoff (Basis 1 s, Faktor 2, Cap 60 s) starten,
+4. bei erfolgreichem Reconnect (`C_Initialize` + `C_OpenSession` + `C_Login` + Mechanism-Check) den Pool neu auffüllen.
+
+Akzeptanz: Ein simulierter Token-Remove löst den dokumentierten Ablauf aus; nach Token-Re-Insert ist der Service binnen einer Backoff-Periode wieder ready.
+
+#### HSM-FA-FAIL-005 – Netzwerkpartition zum Netzwerk-HSM
+
+Bei Netzwerk-HSMs MUSS der Dienst eine TCP-/Heartbeat-Überwachung der HSM-Verbindung implementieren oder vom Vendor-Modul übernehmen. Ein Timeout MUSS als `HSM_DEVICE_ERROR` behandelt werden und HSM-FA-FAIL-003 auslösen.
+
+Akzeptanz: Ein netemulierter Paketverlust > 80 % über 10 s öffnet den Circuit Breaker; ein nachfolgendes Wiederherstellen schließt ihn.
+
+#### HSM-FA-FAIL-006 – Re-Login-Strategie
+
+Bei `CKR_USER_NOT_LOGGED_IN` MUSS der Dienst einen kontrollierten Re-Login durchführen, höchstens mit der konfigurierten Frequenz (Default: max. 1 Re-Login pro Session pro 60 s). Übermäßige Re-Logins MÜSSEN vermieden werden, um HSM-spezifische Lockout-Mechanismen nicht auszulösen.
+
+Akzeptanz: Ein erzwungenes Logout führt zu maximal einem Re-Login innerhalb der Default-Periode; die Metrik `hsmdoc_hsm_relogin_total` zählt Re-Logins pro Slot.
+
+#### HSM-FA-FAIL-007 – Readiness-Signal
+
+`/readyz` MUSS den Status `not ready` zurückliefern, solange:
+
+- der Session-Pool weniger als 1 funktionsfähige Session besitzt,
+- der Circuit Breaker offen ist,
+- der `CKM_AES_GCM`-Check beim letzten Reconnect fehlgeschlagen ist,
+- ein permanenter Fehler (`HSM_PIN_INVALID`, `MECHANISM_MISSING`) erkannt wurde.
+
+Akzeptanz: Für jeden dieser Zustände existiert ein automatisierter Test, der `/readyz` als nicht-ready beobachtet, ohne dass Liveness verletzt wird.
+
+#### HSM-FA-FAIL-008 – Liveness vs. Readiness
+
+`/healthz` (Liveness) DARF NICHT auf HSM-Fehler reagieren, solange der Service-Prozess selbst korrekt arbeitet. HSM-Ausfälle MÜSSEN ausschließlich auf Readiness und Circuit Breaker wirken, damit Kubernetes den Pod nicht in einer Reconnect-Phase neu startet.
+
+Akzeptanz: Ein simulierter HSM-Ausfall lässt `/healthz` grün und `/readyz` rot; Kubernetes restartet den Pod im Test nicht.
 
 ---
 
@@ -636,23 +823,31 @@ Audit-Einträge MÜSSEN ein eindeutig versioniertes Schema haben. Pflichtfelder 
 
 ### 10.1 Performance
 
-#### HSM-NFA-PERF-001 – Mindestdurchsatz Encrypt
+#### HSM-NFA-PERF-001 – Zielwert Durchsatz Encrypt (SoftHSM)
 
-Auf der Referenzumgebung (HSM-LESE-005) MUSS der Service je Replica mindestens 200 MiB/s Encrypt-Durchsatz bei 4-MiB-Chunks gegen SoftHSM erreichen.
+Auf der Referenzumgebung (HSM-LESE-005) SOLL der Service je Replica mindestens 200 MiB/s Encrypt-Durchsatz bei 4-MiB-Chunks gegen SoftHSM v2 erreichen. Dieser Wert ist ein Zielwert; abweichende Messergebnisse MÜSSEN im Abnahmebericht mit Hardware-, Kernel- und Konfigurationsangaben dokumentiert werden.
 
-Akzeptanz: Benchmark-Skript `bench/encrypt-soft.sh` liefert ≥ 200 MiB/s im p50 über 60 s Last.
+Akzeptanz: Benchmark-Skript `bench/encrypt-soft.sh` liefert eine reproduzierbare Messung; das Messprotokoll dokumentiert p50/p95/p99-Durchsatz und Konfiguration.
 
-#### HSM-NFA-PERF-002 – Mindestdurchsatz mit Netzwerk-HSM
+#### HSM-NFA-PERF-002 – Zielwert Durchsatz Netzwerk-HSM
 
-Mit Netzwerk-HSM SOLL je Replica ≥ 50 MiB/s Encrypt-Durchsatz erreicht werden.
+Mit Netzwerk-HSM SOLL je Replica ein Encrypt-Durchsatz erreicht werden, der hardwareprofilspezifisch im jeweiligen Abnahmebericht festgelegt wird. Als Orientierungswert gilt ≥ 50 MiB/s bei 4-MiB-Chunks, RTT < 2 ms und mindestens 16 parallelen Sessions.
 
-#### HSM-NFA-PERF-003 – Latenz pro Chunk
+Hinweis: Der tatsächlich erreichbare Durchsatz hängt stark von HSM-Modell, AES-Implementierung, Sessionanzahl und RTT ab. Verbindliche Werte werden pro Hardwareprofil festgelegt; siehe HSM-RISK-001 und HSM-RISK-003.
 
-Die p99-Latenz pro 4-MiB-Chunk-Roundtrip MUSS ≤ 50 ms (SoftHSM) bzw. ≤ 200 ms (Netzwerk-HSM) sein.
+Akzeptanz: Für jedes Produktionsprofil (siehe HSM-TECH-006) liegt ein Messprotokoll vor, das den real erreichten Wert dokumentiert und mit dem im Profil festgelegten Zielwert vergleicht.
 
-#### HSM-NFA-PERF-004 – Parallele Streams
+#### HSM-NFA-PERF-003 – Latenz pro Chunk (Zielwert)
 
-Der Service MUSS pro Replica mindestens 64 parallele Streams verarbeiten können, ohne dass die p99-Latenz aus HSM-NFA-PERF-003 verletzt wird.
+Die p99-Latenz pro 4-MiB-Chunk-Roundtrip SOLL ≤ 50 ms (SoftHSM) bzw. ≤ 200 ms (Netzwerk-HSM-Referenzprofil) sein. Für andere Hardwareprofile gilt der jeweils festgelegte Profil-Zielwert.
+
+Akzeptanz: Messprotokoll für jedes Profil weist die p99-Latenz aus.
+
+#### HSM-NFA-PERF-004 – Parallele Streams (Zielwert)
+
+Der Service SOLL pro Replica mindestens 64 parallele Streams verarbeiten können, ohne dass die p99-Latenz aus HSM-NFA-PERF-003 um mehr als den Faktor 2 verletzt wird. Die tatsächlich erreichbare Parallelität wird durch die HSM-Sessionkapazität begrenzt (siehe HSM-RISK-001).
+
+Akzeptanz: Lasttest mit 64 parallelen Streams in der Referenzumgebung; Ergebnis und HSM-Sessionauslastung sind dokumentiert.
 
 ### 10.2 Skalierbarkeit
 
@@ -944,7 +1139,77 @@ Die Aufbewahrungsdauer von Audit-Logs MUSS so wählbar sein, dass branchenspezif
 
 ---
 
-## 15. Risiken
+## 15. Bedrohungsmodell
+
+Dieses Kapitel skizziert ein orientierendes Threat Model nach Art von STRIDE; eine ausführliche, mit dem Sicherheitsbeauftragten abgestimmte Variante MUSS im Sicherheitskonzept des Projekts entstehen.
+
+### HSM-THREAT-001 – Scope und Vertrauensanker
+
+Innerhalb des Vertrauensankers: HSM (physisch geschützt, zertifiziert), HSM-PIN aus Secret-Store, gepflegte TLS-PKI, Audit-Verankerungssenke.
+
+Außerhalb des Vertrauensankers: jeder Service-Prozess (kompromittierbar), Container-Image vor Signaturprüfung, jeder Cluster-Knoten, jedes Klartext-Backend, jeder Client-Aufrufer.
+
+Akzeptanz: Die Liste der vertrauenswürdigen und nicht-vertrauenswürdigen Komponenten ist im Sicherheitskonzept dokumentiert und mit der Architektur konsistent.
+
+### HSM-THREAT-002 – Insider mit Cluster-Zugriff
+
+Bedrohung: Ein Insider mit Kubernetes-Cluster-Admin-Rechten kann Pods exec'en, Secrets lesen, Sidecars injizieren.
+
+Mitigation: HSM-PIN aus separat berechtigtem Secret-Store, `readOnlyRootFilesystem`, keine Shell im Image (HSM-NFA-SEC-007), 4-Augen-Prinzip für Secret-Zugriffe organisatorisch, RBAC-Trennung Plattform/Crypto-Officer. Restrisiko: Cluster-Admin kann Pod-Identität imitieren — Mitigation nur durch HSM-seitige Bindung an Pod-Attestierung (z. B. SPIFFE/SPIRE + HSM-Login-Policy) erreichbar, KANN als Erweiterung berücksichtigt werden.
+
+### HSM-THREAT-003 – Kompromittierter Client
+
+Bedrohung: Aufrufender Backend-Dienst wurde übernommen und ruft Encrypt/Decrypt mit fremden Doc-IDs oder Mandantenkontext auf.
+
+Mitigation: mTLS mit Per-Service-Identität (HSM-API-GRPC-003), `tenant_id` aus mTLS-Subject (HSM-FA-TENANT-001), Quotas (HSM-FA-TENANT-003), Audit-Sichtbarkeit aller Operationen mit `caller` und `tenant_id`, Anomalie-Erkennung über Auswertung des Audit-Logs.
+
+### HSM-THREAT-004 – Replay verschlüsselter Container
+
+Bedrohung: Ein Angreifer spielt einen alten Container erneut in den Speicher des aufrufenden Systems ein.
+
+Mitigation: AAD im Header bindet Container an Doc-ID, Mandant und ggf. Versionskette (HSM-FA-ENC-005, HSM-FMT-001); die aufrufende Anwendung MUSS die Bindung serverseitig prüfen. Der Dienst selbst kann Replay nicht erkennen, weil er stateless ist.
+
+Akzeptanz: Risiko ist explizit benannt und im Java-Client-Beispiel ist die Bindungsprüfung als Empfehlung dokumentiert.
+
+### HSM-THREAT-005 – Queue/Resource Exhaustion (DoS)
+
+Bedrohung: Ein Angreifer öffnet sehr viele parallele Streams oder sendet Pseudo-Klartext mit künstlich kleiner Chunk-Konfiguration.
+
+Mitigation: Queue-Limits (HSM-FA-QUEUE-001), Tenant-Quotas (HSM-FA-TENANT-003), Chunkgröße-Validierung (HSM-FA-CHUNK-001), Connection-/Stream-Limits am Ingress, Rate-Limit pro `caller`.
+
+### HSM-THREAT-006 – HSM-DoS
+
+Bedrohung: Aggressive Aufrufer treiben die HSM-Session- oder Operations-Kapazität ans Limit, sodass andere Mandanten oder Aufrufer keine Operationen mehr durchführen können.
+
+Mitigation: Fair Scheduling (HSM-FA-TENANT-004), Backpressure (HSM-FA-QUEUE-002), Circuit Breaker (HSM-FA-FAIL-003), Capacity-Planning gegen HSM-Datenblatt.
+
+### HSM-THREAT-007 – Memory Scraping
+
+Bedrohung: Ein Angreifer mit Speicherzugriff auf den Service-Container liest Klartext-Chunks oder Buffer aus.
+
+Mitigation: minimale Pufferzeit pro Chunk, explizites Überschreiben sensibler Buffer (HSM-NFA-SEC-004), `readOnlyRootFilesystem`, keine Coredumps, `MADV_DONTDUMP` für sensible Bereiche, Pod-Härtung (HSM-NFA-SEC-008). Restrisiko: vollständige Memory-Scrubs sind in Go nicht garantiert; das Threat Model dokumentiert dieses Restrisiko.
+
+### HSM-THREAT-008 – Node Compromise
+
+Bedrohung: Ein Cluster-Knoten ist kompromittiert; der Angreifer hat root-Zugriff und liest Prozessspeicher, Filesystem und Netzwerk-Traffic.
+
+Mitigation: Service-Pod als Workload sensibel klassifizieren (z. B. dediziertes NodePool mit erhöhten Härtungsanforderungen), mTLS zwischen Komponenten, getrennte Secret-Store-Berechtigungen, kurze HSM-Session-Lifetime, regelmäßige Knoten-Rotation. Restrisiko: ein root-Angreifer kann jede laufende Encrypt-Operation kompromittieren — dieses Restrisiko ist nur durch Confidential-Compute-Ansätze (z. B. AMD SEV-SNP, Intel TDX) weiter reduzierbar und KANN als Roadmap-Punkt berücksichtigt werden.
+
+### HSM-THREAT-009 – Audit-Manipulation
+
+Bedrohung: Ein Angreifer mit Schreibrecht auf den Audit-Sink versucht, Einträge zu manipulieren oder die Datei vollständig neu zu schreiben.
+
+Mitigation: Hash-Chain (HSM-FA-AUDIT-002), Segmentsignatur (HSM-FA-AUDIT-006), externe Verankerung (HSM-FA-AUDIT-007), Chain-Rotation (HSM-FA-AUDIT-008), Zeitstempelquelle (HSM-FA-AUDIT-009).
+
+### HSM-THREAT-010 – Supply Chain
+
+Bedrohung: Kompromittierte Dependency (Go-Modul, Java-Library, PKCS#11-Vendor-Modul) injiziert bösartigen Code.
+
+Mitigation: SBOM (HSM-NFA-SEC-005), Image-Signierung (HSM-NFA-SEC-006), Pinning aller Abhängigkeiten, Verifikation der Vendor-Module beim Start (HSM-API-P11-002), reproducible builds als Ziel.
+
+---
+
+## 16. Risiken
 
 ### HSM-RISK-001 – HSM-Kapazitätsgrenzen
 
@@ -984,7 +1249,7 @@ Mitigation: AAD enthält anwendungsspezifische Kontextinformation (z. B. Doc-ID)
 
 ---
 
-## 16. Annahmen
+## 17. Annahmen
 
 ### HSM-ASSUMP-001 – HSM verfügbar
 
@@ -1004,7 +1269,7 @@ Es wird angenommen, dass aufrufende Backend-Dienste über mTLS oder einen vorgel
 
 ---
 
-## 17. Abnahmekriterien
+## 18. Abnahmekriterien
 
 ### HSM-ACCEPT-001 – Funktionale Abnahme
 
@@ -1032,7 +1297,7 @@ Konfiguration belegt TLS 1.3, AES-256-GCM, BSI-TR-02102-konforme Cipher-Suites; 
 
 ---
 
-## 18. Mengengerüst
+## 19. Mengengerüst
 
 ### HSM-MENGE-001 – Lastannahmen MVP
 
@@ -1049,7 +1314,7 @@ Es wird angenommen, dass typische Installationen 1 bis 100 logische Schlüssel v
 
 ---
 
-## 19. Glossar
+## 20. Glossar
 
 ### HSM-GLOSS-001 – Begriffe
 
@@ -1071,7 +1336,7 @@ Es wird angenommen, dass typische Installationen 1 bis 100 logische Schlüssel v
 
 ---
 
-## 20. Referenzen
+## 21. Referenzen
 
 ### HSM-REF-001 – Normen und Standards
 
