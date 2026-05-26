@@ -95,9 +95,17 @@ header_key = HKDF-SHA-256(
 )
 ```
 
-Der Master-HMAC-Schlüssel MUSS pro logischer `key_id` existieren, im HSM verwahrt und nicht extrahierbar sein. Die HKDF-Ableitung MUSS ebenfalls im HSM erfolgen (`CKM_HKDF_DERIVE` oder Vendor-Äquivalent). Bei Schlüsselrotation MUSS auch der Master-HMAC-Schlüssel neu erzeugt und die neue `key_version` einbezogen werden.
+Der Master-HMAC-Schlüssel MUSS pro logischer `key_id` existieren, im HSM verwahrt und nicht extrahierbar sein. Bei Schlüsselrotation MUSS auch der Master-HMAC-Schlüssel neu erzeugt und die neue `key_version` einbezogen werden.
 
-Akzeptanz: Der Header-Key verlässt das HSM nie; der Code verwendet ausschließlich PKCS#11-HMAC-Operationen über das abgeleitete Handle. Ein Versuch, den Master-HMAC-Schlüssel zu exportieren, schlägt mit `CKR_KEY_UNEXTRACTABLE` fehl.
+Die HKDF-Ableitung MUSS ohne Klartext-Export des Master-Materials erfolgen. PKCS#11-Unterstützung für HKDF ist herstellerabhängig und inkonsistent; daher gelten folgende, in Reihenfolge bevorzugte Profile, die je HSM-Profil (HSM-TECH-006 des Lastenhefts) zu prüfen sind:
+
+1. **Profil A – natives HKDF**: `CKM_HKDF_DERIVE` mit `salt` und `info` über `CK_HKDF_PARAMS`. Falls vom HSM unterstützt, MUSS dieses Profil verwendet werden.
+2. **Profil B – HMAC-Konstruktion**: HKDF wird als zwei HMAC-SHA-256-Schritte im HSM nachgebaut (Extract: `HMAC(salt, ikm)`; Expand: `HMAC(prk, info || 0x01)`), realisiert über `CKM_SHA256_HMAC` auf dem nicht-extrahierbaren Master-Key. Das resultierende Handle wird als nicht-extrahierbares `CKM_GENERIC_SECRET` importiert oder durch eine zweite HMAC-Operation direkt als Header-HMAC verwendet, sodass weder PRK noch Header-Key das HSM verlassen.
+3. **Profil C – Vendor-Mechanismus**: Vendor-spezifischer KDF-Mechanismus (z. B. Thales- oder Utimaco-eigener KDF), sofern er äquivalente Sicherheitseigenschaften und nicht-extrahierbare Ausgabe garantiert. Vendor-Wahl, Mechanismus-OID und Eignungsnachweis MÜSSEN im jeweiligen HSM-Profil-Dokument festgehalten sein.
+
+Ein HSM-Profil, das keines dieser drei Profile sicher unterstützt, ist nicht freigegeben.
+
+Akzeptanz: Der Header-Key verlässt das HSM nie; der Code verwendet ausschließlich PKCS#11-Operationen über die abgeleiteten Handles. Ein Versuch, den Master-HMAC-Schlüssel oder den Header-Key zu exportieren, schlägt mit `CKR_KEY_UNEXTRACTABLE` fehl. Für jedes freigegebene HSM-Profil ist im Repository dokumentiert, welches der drei HKDF-Profile aktiv ist und mit welchem Smoke-Test es validiert wird.
 
 ---
 
@@ -369,7 +377,9 @@ Audit-Einträge MÜSSEN dauerhaft persistiert sein, bevor sie den `audit-attempt
   - `batched-fsync` (Default für Standardumgebungen): Einträge werden in Gruppen ≤ 100 ms oder ≤ 1000 Einträge gesyncert; `audit-attempt` schließt erst nach Sync ab.
 - Bei Sync-Fehler MUSS der zugehörige Stream sofort abgebrochen werden (`STREAM_ABORTED`, Fehlerklasse `AUDIT_DURABILITY_FAILED`); der Service DARF KEINEN Ciphertext-Chunk emittieren, dessen Audit-Eintrag nicht durabel ist.
 
-Akzeptanz: Ein erzwungener Sync-Fehler (z. B. EIO) führt zum dokumentierten Stream-Abbruch; die Metrik `hsmdoc_audit_durability_failed_total` steigt.
+Performance-Hinweis: Die Kombination `per-entry-fsync` + Netzwerk-HSM + latenzbehaftetes Storage kann die effektive Pro-Chunk-Latenz dominieren. Der Sync addiert sich seriell auf den HSM-Roundtrip; bei rotierender Festplatte als Audit-Sink sind Pro-Chunk-Latenzen jenseits der Zielwerte aus HSM-NFA-PERF-003 des Lastenhefts realistisch. Empfehlung: für regulierte Umgebungen Audit-Sink auf NVMe-Volume oder dedizierten Append-only-Service mit eigener Latenz-SLA legen; für Hochdurchsatzprofile `batched-fsync` mit kleinem Batch-Fenster (≤ 20 ms) wählen.
+
+Akzeptanz: Ein erzwungener Sync-Fehler (z. B. EIO) führt zum dokumentierten Stream-Abbruch; die Metrik `hsmdoc_audit_durability_failed_total` steigt. Die effektive Pro-Chunk-Latenz unter `per-entry-fsync` ist im Abnahmebericht pro HSM-Profil und Storage-Backend dokumentiert.
 
 ### HSM-FA-AUDIT-011 – Zulässige Audit-Senken
 
