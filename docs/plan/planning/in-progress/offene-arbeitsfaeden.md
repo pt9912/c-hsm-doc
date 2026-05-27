@@ -36,10 +36,11 @@ markiert (siehe Commits `9c4f59c` + `dcc1758`).
 - **Risiko, wenn nicht gefixt:** Ein neu eingezogener
   `adapter/<sibling>/` mit unerwünschter Kopplung würde nicht
   vom Linter erkannt; nur Code-Review fängt es.
-- **Routing:** Wenn Slice 002 ein zweites Adapter-Sibling
-  (`driven/pkcs11/`) einzieht, im selben Slice prüfen, ob das
+- **Routing:** Slice 002b zieht `driven/pkcs11/` als zweites
+  Adapter-Sibling ein; im selben Slice prüfen, ob das
   Pattern es nahelegt, einen Sibling-Filter zu ergänzen.
-  Andernfalls hier stehen lassen.
+  Andernfalls hier stehen lassen. (Slice 002a fügt noch kein
+  zweites Adapter-Sibling ein — nur Build-Pipeline.)
 
 ### 1.2 Threshold Two-Sources-of-Truth
 
@@ -60,11 +61,13 @@ markiert (siehe Commits `9c4f59c` + `dcc1758`).
 
 ### 2.1 `MaxRecvMsgSize` / Keepalive für gRPC-Server — geroutet
 
-- Geroutet in [`../next/002-pkcs11-encrypt.md`](../next/002-pkcs11-encrypt.md)
+- Geroutet in [`../next/002b-pkcs11-encrypt-hexagon.md`](../next/002b-pkcs11-encrypt-hexagon.md)
   §gRPC-Adapter (Scope) und §Akzeptanzkriterien
   (`TODO(slice-002)` aus `cmd/hsmdoc/main.go` muss mit dem Slice
-  beseitigt sein). Eintrag bleibt als Routing-Marker stehen, bis
-  Slice 002 nach `done/` migriert ist.
+  beseitigt sein — Encrypt-Stream landet erst in 002b, deshalb
+  bleibt der TODO durch Slice 002a unberührt). Eintrag bleibt
+  als Routing-Marker stehen, bis Slice 002b nach `done/` migriert
+  ist.
 
 ### 2.2 TLS-Material-Reload ohne Prozess-Restart
 

@@ -1,4 +1,4 @@
-# 002 — PKCS#11-Adapter + Encrypt-Stream
+# 002b — PKCS#11-Adapter + Encrypt-Hexagon + Audit
 
 **Meilenstein:** M1 (siehe [`roadmap.md`](../in-progress/roadmap.md))
 **Status:** `next` (Scope skizziert, noch nicht aktiv)
@@ -6,99 +6,25 @@
 
 ## Ziel
 
-Aus dem `UNIMPLEMENTED`-Skeleton (Slice 001) wird der erste produktive
-Encrypt-Pfad: gRPC-Server nimmt einen bidirektionalen Encrypt-Stream
-entgegen, der Domain-Layer chunked den Klartext nach Chunk-State-
-Machine ([`HSM-FA-CHUNK-004`](../../../../spec/spezifikation.md)), ein
-PKCS#11-Adapter (driven) führt je Chunk genau eine AES-256-GCM-Operation
-gegen das HSM aus ([`HSM-FA-ENC-006`](../../../../spec/spezifikation.md)),
-der Server emittiert einen formatkonformen Container
+Aus dem `UNIMPLEMENTED`-Skeleton (Slice 001) und der CGO-fähigen
+Build-Pipeline (Slice 002a) wird der erste produktive Encrypt-Pfad:
+gRPC-Server nimmt einen bidirektionalen Encrypt-Stream entgegen, der
+Domain-Layer chunked den Klartext nach Chunk-State-Machine
+([`HSM-FA-CHUNK-004`](../../../../spec/spezifikation.md)), ein
+PKCS#11-Adapter (driven) führt je Chunk genau eine AES-256-GCM-
+Operation gegen das HSM aus
+([`HSM-FA-ENC-006`](../../../../spec/spezifikation.md)), der Server
+emittiert einen formatkonformen Container
 ([`HSM-FMT-001..006`](../../../../spec/spezifikation.md)). Validiert
-wird gegen SoftHSM v2 im CI.
+wird gegen SoftHSM v2 **und** ein zweites herstellerfremdes OSS-
+PKCS#11-Modul im CI (siehe ADR 0004 aus 002a).
 
-Dieser Slice ist der größte Sprung in M1: er etabliert die hexagonale
-Domain-Schicht, den ersten driven Adapter und den ersten Build-Pfad
-mit CGO. Open-Trigger 002 (CGO-Base-Switch) wird mit diesem Slice
-eingelöst.
+Dieser Slice ist der fachliche Kern von M1: er etabliert die
+hexagonale Domain-Schicht, den ersten driven Adapter, den durablen
+Audit-Sink und den ersten Encrypt-End-to-End-Pfad. Die CGO-Build-
+Pipeline ist Vorbedingung und wird durch Slice 002a geliefert.
 
 ## Scope
-
-### Build-Pipeline (Open-Trigger 002 einlösen)
-
-- `Dockerfile`: `RUNTIME_BASE_IMAGE`-Default von
-  `gcr.io/distroless/static-debian12:nonroot` auf
-  `gcr.io/distroless/base-debian12:nonroot` umstellen.
-- `build`-Stage: `CGO_ENABLED=1`, dynamisches Linken aktivieren.
-- Vendor-`.so`-Pfad (`softhsm2.so` im Dev-Bild, beliebiges Vendor-
-  Modul in Produktion) wird über separate `COPY --from=...`-Stage in
-  das Runtime-Image gebracht. Lokale CI nutzt SoftHSM aus dem
-  offiziellen Paket.
-- **Transitive Shared-Library-Closure:** Distroless-base bringt nur
-  `libc`/`libdl`/`libpthread` mit. Vendor-`.so`-Module ziehen
-  typischerweise weitere Libraries nach (z. B. SoftHSM v2 →
-  `libsoftokn3`, `libnss3`, `libsqlite3`; OpenCryptoki →
-  `libica`, `libcrypto`). Eine zusätzliche Build-Stage ermittelt
-  die Closure **deterministisch über `lddtree`** aus
-  `pax-utils` (alternativ `scanelf -nB` + `readelf -d` für die
-  NEEDED-/RPATH-/RUNPATH-Auflösung), nicht über rohes `ldd`-
-  Parsing — `ldd` ist nicht für Stücklisten gedacht und bringt
-  „not found"/RPATH-/`$ORIGIN`-Fallstricke. Der Build:
-  1. Ruft `lddtree --list --skip-non-elfs $MODULE` in der
-     `deps-closure`-Stage gegen das Distroless-base-Sysroot auf.
-  2. Schreibt die deduplizierte Pfadliste in
-     `/build/pkcs11-libs.list` (Stückliste, im Repo per Diff
-     prüfbar) **und** kopiert in derselben Stage jeden gelisteten
-     Pfad nach `/staging/pkcs11-rootfs/` unter Erhalt der
-     Verzeichnisstruktur (`install -D` pro Eintrag). Hintergrund:
-     Dockerfile-`COPY` kann nicht über eine zur Build-Zeit erzeugte
-     Liste iterieren — deshalb wird die Iteration in der
-     Build-Stage gemacht und das fertige Staging-Verzeichnis als
-     statischer Pfad übernommen.
-  3. Im Runtime-Image: ein einziger
-     `COPY --from=deps-closure /staging/pkcs11-rootfs/ /` bringt
-     das PKCS#11-Modul plus alle transitiven Libraries ins Image.
-     Die Stückliste wird parallel als
-     `COPY --from=deps-closure /build/pkcs11-libs.list /etc/hsmdoc/pkcs11-libs.txt`
-     ausgeliefert.
-  4. Verifiziert die Closure **zweistufig**:
-     - **Build-Time:** Eine separate `closure-check`-Stage auf
-       Debian-Slim (mit `lddtree`/`ldd`) wird mit
-       `lddtree --root $RUNTIME_FS` (pax-utils-Flag, nicht
-       `--rootfs`) gegen den Runtime-Rootfs aufgerufen und prüft,
-       dass `lddtree` keine „not found"-Einträge meldet.
-       Distroless selbst hat keine Shell und kein `ldd`, deshalb
-       passiert die Prüfung außerhalb des Runtime-Images, aber
-       gegen denselben Dateibaum.
-     - **Runtime-Smoke:** Ein winziges Go-Helper-Binary
-       `cmd/pkcs11-dlopen-smoke/` (in derselben Build-Stage
-       erzeugt, ins Runtime-Image kopiert) ruft
-       `dlopen($MODULE, RTLD_NOW)` auf; Fehlschlag → Exit-Code
-       ≠ 0 mit `dlerror()`-Output. Das deckt RPATH-/`$ORIGIN`-
-       Auflösung **echt zur Laufzeit** ab und braucht keine
-       Shell im Distroless.
-       **Aufrufpunkte (beide Pflicht):**
-       - Der `hsmdoc`-Hauptprozess ruft das Smoke-Binary
-         **synchron als ersten Schritt** im Startup auf (über
-         `os/exec`, vor `C_Initialize`/Pool-Aufbau);
-         Exit-Code ≠ 0 → Service-Start bricht mit
-         `STARTUP_PKCS11_DLOPEN_FAILED` ab. Damit ist die
-         Closure-Garantie keine Build-Time-Annahme, sondern
-         pro Pod-Start neu validiert.
-       - `make smoke-dlopen` ruft dasselbe Binary außerhalb des
-         Service-Starts (CI-Pfad, Forensik, manuelle Diagnose).
-  Der Test ist Voraussetzung für den Integrationstest. Die
-  Stückliste wird im ADR 0004 dokumentiert und im Image als
-  `/etc/hsmdoc/pkcs11-libs.txt` ausgeliefert (Forensik-Hilfe).
-- **Folge-ADR** (geplant: `ADR 0004 — Runtime-Base für CGO/PKCS#11`)
-  begründet den Wechsel auf `distroless/base` und das Aktivieren von
-  CGO. ADR 0002 ist `Accepted` und bleibt nach
-  [ADR 0001 §2.3](../../adr/0001-documentation-and-planning-structure.md)
-  inhaltlich unverändert; der ADR-Index trägt 0004 als „Schärfung von
-  0002" ein
-  ([`HSM-NFA-SEC-007`](../../../../spec/lastenheft.md) bleibt erfüllt:
-  keine Shell, kein Paketmanager).
-- Image-Größe + Trivy-Scan gegenprüfen, Werte in ADR 0004 aufnehmen.
-- Open-Trigger 002 nach `done/` migrieren (analog zu 001).
 
 ### Hexagon-Layout — Domain und Application
 ([`HSM-ARCH-001`](../../../../spec/lastenheft.md),
@@ -143,8 +69,14 @@ von der Application konsumiert, Adapter implementieren sie.
 - **Neu (application):** Worker-Pool-Orchestrierung
   ([`HSM-FA-CHUNK-005`](../../../../spec/spezifikation.md),
   [`HSM-ARCH-003`](../../../../spec/spezifikation.md)) als
-  Application-Detail im Encrypt-Use-Case; Reorder-Buffer für
-  `SEALED → EMITTED` in strikter `seq`-Reihenfolge.
+  Application-Detail im Encrypt-Use-Case; Reorder-Buffer für die
+  Commit- und Emit-Strecke in strikter `seq`-Reihenfolge. Chunks dürfen
+  out-of-order `SEALED` werden, aber der Use-Case führt danach pro
+  Stream ein gemeinsames Ordering-Gate: `audit-attempt` wird erst für
+  den nächsten erwarteten `seq` durabel geschrieben, danach darf genau
+  dieser Chunk `SEALED → EMITTED` wechseln. Damit bleiben sowohl
+  `HSM-FA-CHUNK-005` (paralleles Seal + geordnetes Emit) als auch
+  `HSM-FA-AUDIT-010` (append-only in `seq`-Folge je Stream) erfüllt.
 
 ### Container-Codec (`internal/hexagon/domain/container/`, schreibender Pfad)
 
@@ -186,7 +118,10 @@ Driven-Port:
   `C_EncryptInit` + `C_Encrypt` (siehe PKCS#11-Adapter-Sektion). Ein
   Mock-Adapter (`internal/adapter/driven/chunksealer/inmemory/`) für
   Unit-Tests der Application-Schicht verwendet Go-`crypto/aes` +
-  `crypto/cipher` und ist nur unter Build-Tag `testing` erreichbar.
+  `crypto/cipher`. Der Mock liegt entweder in `_test.go`-Dateien im
+  Testpackage oder in einem Test-Helper-Paket, das nur von Tests
+  importiert wird; kein impliziter Build-Tag `testing` wird
+  vorausgesetzt, weil `go test` diesen Tag nicht automatisch setzt.
 
 ### HeaderMAC-Port (`internal/hexagon/port/driven/headermac/`)
 ([`HSM-FMT-006`](../../../../spec/spezifikation.md))
@@ -196,11 +131,13 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
 
 - **`key_version`-Auflösung serverseitig:** Der Proto-`EncryptHeader`
   ([`spec/proto/chsmdocv1/c_hsm_doc.proto`](../../../../spec/proto/chsmdocv1/c_hsm_doc.proto))
-  trägt nur `key_id`, **keinen** `key_version`. Slice 002 löst die
+  trägt nur `key_id`, **keinen** `key_version`. Slice 002b löst die
   aktive `key_version` ausschließlich serverseitig aus der
   Key-Registry auf — sobald der Encrypt-Header eintrifft, wählt der
-  Server den `active`-Eintrag mit der höchsten `key_version` für die
-  übergebene `key_id`. Die so ermittelte `key_version` wird in den
+  Server den eindeutig als `active` markierten Eintrag für die
+  übergebene `key_id`. Pro `key_id` darf es genau einen `active`-
+  Eintrag geben; mehrere `active`-Versionen sind ein Schema-Fehler
+  beim Start. Die so ermittelte `key_version` wird in den
   Container-Header
   ([`HSM-FMT-001`](../../../../spec/spezifikation.md)), in AAD je
   Chunk ([`HSM-FA-ENC-005`](../../../../spec/spezifikation.md)),
@@ -208,8 +145,6 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   ([`HSM-FMT-006`](../../../../spec/spezifikation.md)) und in das
   Audit-Feld geschrieben. Decrypt (Slice 003) liest `key_version`
   zurück aus dem Container-Header — keine Proto-Erweiterung nötig.
-  Existieren mehrere `active`-Versionen für dieselbe `key_id` ist
-  das Schema-Fehler beim Start (Key-Registry-Validierung).
 - **Neu (port):**
   `HeaderMAC.Sign(ctx context.Context, keyRef KeyRef, headerBytesWithoutHMAC) ([32]byte, error)`.
   Der Port nimmt **denselben** `KeyRef`, der vorher aus
@@ -252,6 +187,23 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
 
 - **Neu:** Driven Adapter, der `github.com/miekg/pkcs11` einbindet
   ([`HSM-API-P11-003`](../../../../spec/spezifikation.md)).
+- **CGO-Build-Tag-Schnitt:** Dateien, die `github.com/miekg/pkcs11`
+  oder Cgo importieren, tragen `//go:build cgo`. Das Paket enthält
+  zusätzlich einen kleinen `!cgo`-Stub ohne PKCS#11-Import, der nur
+  Konstruktoren/Interfaces kompilierbar hält und bei echter
+  Initialisierung deterministisch mit `STARTUP_PKCS11_CGO_DISABLED`
+  scheitert. Damit bleiben Pure-Go-Läufe (`CGO_ENABLED=0 go test
+  ./...`) für Domain/Application/Config möglich, während der reale
+  Adapter ausschließlich in `CGO_ENABLED=1`-Builds und
+  Integrationstests verwendet wird. Der Runtime-`build`-Stage aus
+  002a baut weiterhin mit `CGO_ENABLED=1`; ein Produktionsimage mit
+  Stub ist nicht zulässig.
+- **Neu:** Adapter-nahe CKR-Übersetzung: raw PKCS#11-Returncodes
+  (`CKR_*`) und `github.com/miekg/pkcs11`-Konstanten bleiben auf
+  `internal/adapter/driven/pkcs11/` beschränkt. Der Adapter mappt sie
+  auf interne Fehlerklassen aus dem Application-/Port-Vertrag; Domain
+  und Application sehen keine PKCS#11-Konstanten und importieren kein
+  PKCS#11-Paket.
 - **Neu:** Session-Pool
   ([`HSM-FA-HSM-003`](../../../../spec/lastenheft.md),
   [`HSM-FA-HSM-004`](../../../../spec/spezifikation.md)) mit
@@ -268,6 +220,15 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
 - **Neu:** Modul-Validierung beim Start
   ([`HSM-API-P11-002`](../../../../spec/spezifikation.md)):
   Existenz-Check, ELF-Header-Check, `C_GetInfo`-Aufruf.
+- **Startup-Synchron-Hook für `pkcs11-dlopen-smoke`** (Binary aus
+  Slice 002a): der `hsmdoc`-Hauptprozess ruft das Smoke-Binary
+  **synchron als ersten Schritt** im Startup auf (über `os/exec`,
+  vor `C_Initialize`/Pool-Aufbau); Exit-Code ≠ 0 → Service-Start
+  bricht mit `STARTUP_PKCS11_DLOPEN_FAILED` ab. Damit ist die
+  Closure-Garantie keine Build-Time-Annahme, sondern pro Pod-Start
+  neu validiert. (002a hat das Binary geliefert; 002b verdrahtet
+  den Aufruf, weil hier erst der echte `C_Initialize`-Pfad
+  entsteht.)
 - **Neu:** `KeyBinding`-Port-Implementierung: nimmt einen
   Registry-`KeyRecord` mit `pkcs11_label` und
   `master_hmac_pkcs11_label`, validiert beide Labels gegen das HSM und
@@ -302,19 +263,26 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   `hsmdoc_header_hmac_profile{profile="A"}` ausgewiesen.
 - **Profil B in M1 ausgeschlossen:** Spec
   ([`HSM-FMT-006`](../../../../spec/spezifikation.md) §1 Profil B)
-  fordert, dass weder PRK noch Header-Key das HSM verlassen. Eine
-  reine `CKM_SHA256_HMAC`-Kette über `C_Sign` liefert PRK-Bytes an
-  den Caller zurück und verletzt die Non-Export-Pflicht; eine
-  saubere PRK-Re-Import-Variante ist vendor-spezifisch und nicht
-  ohne validierten Mechanismuspfad pro Modul tragfähig. Profil B
-  bleibt deshalb M3-Scope: Pro produktivem HSM-Profil
+  beschreibt eine spec-konforme HMAC-Konstruktion (Extract via
+  `CKM_SHA256_HMAC` auf dem nicht-extrahierbaren Master-Key,
+  Expand über PRK-Re-Import in ein nicht-extrahierbares Secret-
+  Key-Objekt oder eine zweite HMAC-Operation direkt auf dem
+  PRK-Handle, sodass weder PRK noch Header-Key das HSM verlassen).
+  Der Pfad ist technisch erreichbar, aber **pro HSM-Modul
+  separat zu validieren**: der konkrete Re-Import-Mechanismus
+  (`CKM_GENERIC_SECRET_KEY_GEN` mit `CKA_VALUE`-Befüllung vs.
+  Vendor-Konstruktion), das Attribut-Template und die
+  Mechanismus-Liste unterscheiden sich von Vendor zu Vendor.
+  Slice 002b hat dafür keinen Validierungsbudget — ein einziger
+  M1-Pfad (Profil A) reduziert das Risiko. Profil B bleibt
+  deshalb M3-Scope: Pro produktivem HSM-Profil
   ([`HSM-TECH-006`](../../../../spec/lastenheft.md)) wird der
   Profil-B-Pfad als Vendor-Detail (z. B. via `CKM_*_DERIVE_DATA`
   oder Vendor-KDF) validiert und freigegeben. Für M1 ist `CKM_HKDF_DERIVE`
   Pflicht-Mechanismus; HSMs ohne natives HKDF sind nicht freigegeben.
   Profil C (Vendor-Mechanismus) bleibt ebenfalls M3.
 - **Neu:** PIN-Bezug aus externem Secret-Store
-  ([`HSM-FA-HSM-002`](../../../../spec/lastenheft.md)). Slice 002
+  ([`HSM-FA-HSM-002`](../../../../spec/lastenheft.md)). Slice 002b
   unterstützt genau eine produktiv zulässige Quelle:
   **Datei mit restriktivem Mode**, gemountet aus einem K8s-Secret-
   Volume oder von einem Vault-Agent gerendert. Validierung beim
@@ -341,7 +309,7 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   §Konfiguration. Bedingungen für PIN_DEV: Start-Warn-Log,
   Verweigerung sobald `HSMDOC_ENV=prod` gesetzt ist oder wenn
   das Binary aus dem produktiven Container-Image startet
-  (Detektion über Build-Tag-Marker oder Env-Whitelist-Datei).
+  (Detektion über Build-Marker im Image oder Env-Whitelist-Datei).
 
   Native Vault- oder K8s-Secret-CSI-Adapter bleiben Folge-Slice
   (eigener Open-Trigger oder Helm-Chart-Scope) — das
@@ -354,6 +322,17 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   belegen die Granularität). `gcmParams` bindet die Pro-Chunk-AAD;
   Tag-Länge 128 Bit. Schlüsselattribut `CKA_EXTRACTABLE=false` ist
   Pflicht-Erwartung beim Key-Lookup.
+  **Binding-Falle:** Der bequeme `github.com/miekg/pkcs11`-Helper
+  `Ctx.Encrypt` DARF hier nicht verwendet werden, weil er intern zuerst
+  einen Längen-Probe-Call `C_Encrypt(..., NULL, ...)` und danach den
+  eigentlichen `C_Encrypt` ausführt. Das verletzt die
+  HSM-FA-ENC-006-Akzeptanz „genau ein `C_Encrypt` pro Chunk". Der
+  Adapter implementiert deshalb einen kleinen adapter-lokalen CGO-Shim
+  (oder den durch den HKDF-Spike ohnehin dokumentierten Binding-Fork),
+  der den Output-Buffer deterministisch als `len(plaintext)+16`
+  vorallokiert und exakt einen `C_Encrypt` mit nicht-NULL Output-Puffer
+  aufruft. Ein `CKR_BUFFER_TOO_SMALL` aus diesem Pfad bleibt
+  `ADAPTER_BUFFER_UNDERSIZED` und ist Adapter-Bug.
 
 ### Key-Registry und minimaler Lifecycle
 ([`HSM-FA-KEY-001`](../../../../spec/lastenheft.md),
@@ -366,7 +345,7 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   - `LookupActive(ctx, keyID) (KeyRecord, error)`
     — wird vom Encrypt-Use-Case aufgerufen (Proto-Header trägt
     keine `key_version`, siehe HeaderMAC-Port). Liefert den
-    eindeutigen `active`-Eintrag der höchsten Version. Fehler:
+    genau einen eindeutigen `active`-Eintrag. Fehler:
     - kein `active`-Eintrag für `keyID` → `FAILED_PRECONDITION` +
       `KEY_NOT_FOUND`.
     - mehrere `active`-Einträge → Schema-Fehler beim Start
@@ -427,12 +406,37 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   ([`HSM-DATA-004`](../../../../spec/spezifikation.md)), Klartext-
   Frames an Application-Use-Case weiterreichen, Container-Bytes als
   Response-Frames emittieren (siehe Wire-Mapping unten).
+- **mTLS-/Caller-Minimalpfad für M1:** Damit `HSM-FA-AUDIT-001`
+  bereits in M1 semantisch erfüllt wird, zieht 002b den kleinsten
+  produktiven Identitätspfad aus `HSM-API-GRPC-003` ein:
+  `mtls-subject` ist in 002b die einzige zulässige Identitätsquelle.
+  Der gRPC-Server lädt `HSMDOC_GRPC_CLIENT_CA`, setzt
+  `tls.Config.ClientAuth = tls.RequireAndVerifyClientCert` und lehnt
+  Encrypt-Streams ohne gültiges Client-Zertifikat mit
+  `UNAUTHENTICATED` ab. Der `caller` wird aus dem Peer-Zertifikat
+  abgeleitet (`HSMDOC_IDENTITY_MTLS_SUBJECT_ATTRIBUTE`, Default
+  `subject_dn`, alternativ `san_uri`) und über den Stream-Kontext an
+  Audit, Logs und Metriken gereicht. Die Header-Identitätsquelle,
+  Peer-Allowlist, Mesh-Termination und die vollständige
+  `identity.*`-Konfigurationsmatrix bleiben Slice 006; 002b etabliert
+  nur den M1-Pfad, damit akzeptierte Streams nie mit
+  Platzhalter-Caller laufen.
+- **Single-Tenant-Normalisierung in M1:** Der Proto-Header trägt zwar
+  `tenant_id`, Slice 002b unterstützt aber nur den
+  Single-Tenant-Bootstrap. Für akzeptierte Streams verwendet der Server
+  deshalb ausschließlich den kanonischen Tenant `default` in
+  Container-Header, AAD, Audit, Logs und Metriken. Eingehende
+  `EncryptHeader.tenant_id`-Werte sind entweder leer oder exakt
+  `default`; jeder andere Wert wird vor Key-Lookup mit
+  `INVALID_ARGUMENT` + Detailcode `TENANT_UNSUPPORTED_IN_M1`
+  abgelehnt. So können Wire-Daten und Audit nicht auseinanderlaufen.
+  Die echte Ableitung aus mTLS/Header-Identität bleibt Slice 006.
 - **Proto-Erweiterung — Container-Wire-Mapping:** Das aktuelle
   `EncryptResponse`
   ([`spec/proto/chsmdocv1/c_hsm_doc.proto`](../../../../spec/proto/chsmdocv1/c_hsm_doc.proto))
   hat nur `EncryptAck`, `DataChunk`, `EncryptFinal` im `oneof body`
   und keine semantischen Felder für Container-Header (HSM-FMT-001)
-  und Trailer (HSM-FMT-003). Slice 002 erweitert `EncryptResponse`
+  und Trailer (HSM-FMT-003). Slice 002b erweitert `EncryptResponse`
   um zwei explizite Oneof-Felder:
   ```proto
   message EncryptResponse {
@@ -466,8 +470,9 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   Der Reorder-Buffer der Application sorgt für die `seq`-Monotonie
   vor Emit. Decrypt-Wire (Slice 003) spiegelt den Mapping in der
   Request-Richtung: `DecryptRequest`-Oneof bekommt analog
-  `container_header` und `container_trailer`. Slice 003 trägt
-  diese Spiegelung; Slice 002 schreibt den Encrypt-Pfad.
+  `container_header` und `container_trailer`. Slice 002b bereitet
+  diese Proto-Felder additiv vor, lässt den Decrypt-Serverpfad aber
+  weiter `UNIMPLEMENTED`; Slice 003 nutzt die Felder fachlich.
 - **MaxRecvMsgSize** + Server-Keepalive setzen — schließt
   `TODO(slice-002)` aus [`cmd/hsmdoc/main.go:109-111`](../../../../cmd/hsmdoc/main.go)
   und Item §2.1 aus
@@ -487,8 +492,23 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
 - **Neu:** Begrenzte In-Memory-Job-Queue
   ([`HSM-FA-QUEUE-001`](../../../../spec/lastenheft.md),
   [`HSM-FA-QUEUE-002`](../../../../spec/spezifikation.md)) mit
-  konfigurierbarer Kapazität (Default 256). Stream-Pfad nutzt sie
-  als Übergabepunkt zwischen Reader-Goroutine und Worker-Pool.
+  konfigurierbarer Kapazität (Default 256) **und** separater
+  In-flight-Byte-Grenze. Stream-Pfad nutzt sie als Übergabepunkt
+  zwischen Reader-Goroutine und Worker-Pool; Queue-Einträge tragen
+  Plaintext-Chunks und dürfen deshalb nicht nur nach Item-Anzahl
+  begrenzt werden.
+- **In-flight-Byte-Semaphore (Pflicht in 002b):** Vor dem Einlesen eines
+  Chunks reserviert der Reader `len(plaintext)` gegen
+  `HSMDOC_INFLIGHT_PLAINTEXT_BYTES`. Die Reservierung wird erst
+  freigegeben, wenn der Chunk entweder emittiert, endgültig fehlgeschlagen
+  oder wegen Cancellation verworfen ist. Default:
+  `min(HSMDOC_MAX_HEAP_BYTES/4, HSMDOC_CHUNK_SIZE_BYTES *
+  HSMDOC_WORKERS * 2)`, Mindestwert `2 * HSMDOC_CHUNK_SIZE_BYTES`,
+  Maximalwert `HSMDOC_MAX_HEAP_BYTES/2`. Start-Abbruch, wenn die Formel
+  wegen zu kleinem Heap-Cap keinen gültigen Wert zulässt. Damit bleiben
+  Queue, Worker-Pool und Reorder-Buffer gemeinsam durch eine Byte-Grenze
+  kontrolliert; eine Queue-Kapazität von 256 bedeutet dann nur
+  Scheduling-Kapazität, nicht 256 volle Chunks im Heap.
 - **Wartezeit-Strategie**
   ([`HSM-FA-QUEUE-003`](../../../../spec/spezifikation.md)):
   Wartezeit vor Ablehnung ist konfigurierbar
@@ -499,29 +519,38 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
 
 ### Retry-Klassifikation (`internal/hexagon/domain/retry/`)
 
-- **Neu:** Klassifikator für PKCS#11-Fehler in `transient`,
+- **Neu:** Klassifikator für interne HSM-Fehlerklassen in `transient`,
   `permanent` und `client`
-  ([`HSM-FA-RETRY-001`](../../../../spec/lastenheft.md)). Die
+  ([`HSM-FA-RETRY-001`](../../../../spec/lastenheft.md)). Die Domain
+  klassifiziert ausschließlich interne Fehlerklassen wie
+  `SESSION_INVALID`, `HSM_DEVICE_ERROR`, `KEY_HANDLE_STALE` oder
+  `INTERNAL`; sie kennt keine raw `CKR_*`-Codes. Die
   **CKR-Mapping-Tabelle** aus
-  [`HSM-FA-FAIL-003`](../../../../spec/spezifikation.md) wird als
-  Code-Konstante + Unit-Test-Fixture vollständig abgebildet — alle
-  14 Returncode-Klassen (`CKR_SESSION_HANDLE_INVALID`,
-  `CKR_SESSION_CLOSED`, `CKR_DEVICE_ERROR`, `CKR_DEVICE_REMOVED`,
-  `CKR_TOKEN_NOT_PRESENT`, `CKR_FUNCTION_FAILED`, `CKR_GENERAL_ERROR`,
+  [`HSM-FA-FAIL-003`](../../../../spec/spezifikation.md) liegt
+  adapter-nah unter `internal/adapter/driven/pkcs11/` als
+  Code-Konstante + Unit-Test-Fixture und wird dort vollständig
+  abgebildet — alle 14 Returncode-Klassen
+  (`CKR_SESSION_HANDLE_INVALID`, `CKR_SESSION_CLOSED`,
+  `CKR_DEVICE_ERROR`, `CKR_DEVICE_REMOVED`, `CKR_TOKEN_NOT_PRESENT`,
+  `CKR_FUNCTION_FAILED`, `CKR_GENERAL_ERROR`,
   `CKR_USER_NOT_LOGGED_IN`, `CKR_PIN_INCORRECT`,
   `CKR_KEY_HANDLE_INVALID`, `CKR_MECHANISM_INVALID`,
-  `CKR_BUFFER_TOO_SMALL`, `CKR_DATA_INVALID` / `CKR_ENCRYPTED_DATA_INVALID`,
-  sonstige `CKR_*`) werden über ein Mock-PKCS#11-Modul exerziert.
-  **`CKR_BUFFER_TOO_SMALL` zählt explizit als `client`-Klasse,
-  nicht `transient`** — das Adapter-Pattern (zweistufiger
-  `C_Encrypt`-Aufruf mit Größen-Probe) muss den Buffer
-  korrekt bemessen; ein realer `CKR_BUFFER_TOO_SMALL` ist
-  Adapter-Bug, kein HSM-Zustand. Kein Retry, harter Stream-
-  Fehler mit Fehlerklasse `INTERNAL` und Detailcode
-  `ADAPTER_BUFFER_UNDERSIZED`. Damit
-  ist ein Endlos-Retry-Loop auf einen Implementierungsfehler
-  ausgeschlossen.
-  **Wichtig:** Slice 002 implementiert die _Mapping-Tabelle_ und
+  `CKR_BUFFER_TOO_SMALL`, `CKR_DATA_INVALID` /
+  `CKR_ENCRYPTED_DATA_INVALID`, sonstige `CKR_*`) werden über ein
+  Mock-PKCS#11-Modul exerziert. Nach dieser Übersetzung entscheidet
+  der Domain-Retry-Klassifikator nur noch auf Basis der internen
+  Fehlerklasse. **`CKR_BUFFER_TOO_SMALL` wird adapterseitig auf
+  `INTERNAL` gemappt und zählt damit nicht als `transient`** — der
+  Adapter muss den Output-Buffer für AES-GCM deterministisch als
+  `len(plaintext)+16` Byte (128-Bit-Tag) vorallokieren, damit der
+  Codepfad pro Chunk bei genau einem `C_Encrypt` bleibt. Ein realer
+  `CKR_BUFFER_TOO_SMALL` ist Adapter-Bug, kein HSM-Zustand und auch
+  keine Client-Verschuldung.
+  Kein Retry, harter Stream-Fehler mit Fehlerklasse `INTERNAL` und
+  Detailcode `ADAPTER_BUFFER_UNDERSIZED` (deckt sich mit
+  HSM-FA-FAIL-003-Mapping `INTERNAL`). Damit ist ein
+  Endlos-Retry-Loop auf einen Implementierungsfehler ausgeschlossen.
+  **Wichtig:** Slice 002b implementiert die _Mapping-Tabelle_ und
   die _Reaktionen_, die der Encrypt-Pfad direkt braucht
   (Session-Recycling, Retry, partieller Sicherheits-Smoke auf
   DEVICE_REMOVED/TOKEN_NOT_PRESENT — siehe unten). Die vollständige
@@ -529,7 +558,7 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   Token-Removal-Recovery und Reconnect) fällt unter
   [`HSM-FA-FAIL-001`](../../../../spec/lastenheft.md), das laut
   [`roadmap.md`](../in-progress/roadmap.md) §M2 explizit M2-Scope ist
-  (Slice 009). Slice 002 erfüllt damit das _Mapping_ aus FAIL-003,
+  (Slice 009). Slice 002b erfüllt damit das _Mapping_ aus FAIL-003,
   nicht die vollständige FAIL-003-Reaktionskette.
 - Session-Lifecycle-Reaktion folgt
   [`HSM-FA-FAIL-004`](../../../../spec/spezifikation.md):
@@ -555,11 +584,11 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
 - Retry pro Chunk hält `seq` und Klartext stabil, generiert neue
   Nonce je Retry
   ([`HSM-FA-CHUNK-006`](../../../../spec/spezifikation.md)).
-- **Token-/Device-Removal (partieller M1-Smoke in 002):** Bei
+- **Token-/Device-Removal (partieller M1-Smoke in 002b):** Bei
   `CKR_DEVICE_REMOVED` und `CKR_TOKEN_NOT_PRESENT` muss der Adapter
   laut [`HSM-FA-FAIL-003`](../../../../spec/spezifikation.md)
   „Pool drainen, Readiness rot, Reconnect-Schleife" auslösen.
-  Slice 002 setzt als defensiven M1-Smoke nur die ersten zwei Schritte
+  Slice 002b setzt als defensiven M1-Smoke nur die ersten zwei Schritte
   um; das ist **keine vollständige Erfüllung von HSM-FA-FAIL-003**:
   - **Pool-Drain:** Alle Sessions zur betroffenen HSM-Quelle werden
     aus dem Pool entfernt; offene Encrypt-Streams brechen mit
@@ -598,7 +627,7 @@ Ein No-Op-Adapter erfüllt die Audit-/Commit-Pflicht **nicht**:
 `audit-attempt` darf erst dann committed sein, wenn der Eintrag
 durabel persistiert ist; ohne Persistenz darf kein Ciphertext-Chunk
 emittiert werden ([`HSM-FA-AUDIT-010`](../../../../spec/spezifikation.md)
-ist explizit). Slice 002 zieht deshalb einen minimal durablen
+ist explizit). Slice 002b zieht deshalb einen minimal durablen
 Audit-Sink ein:
 
 - **Neu (port):** `internal/hexagon/port/driven/audit/` — Interface
@@ -612,7 +641,11 @@ Audit-Sink ein:
   Strategie-Modus erfüllt.
 - **Neu (adapter):** `internal/adapter/driven/audit/file/` —
   JSONL-Append-Sink. Schreibreihenfolge append-only in `seq`-Folge je
-  Stream. Sync-Strategie konfigurierbar
+  Stream. Der Adapter validiert diese Reihenfolge defensiv und lehnt
+  einen Eintrag ab, dessen `seq` nicht dem nächsten erwarteten Wert für
+  den Stream entspricht; das primäre Ordering passiert im Encrypt-
+  Use-Case vor `AuditSink.Write`, nicht im Dateiadapter. Sync-Strategie
+  konfigurierbar
   ([`HSM-FA-AUDIT-010`](../../../../spec/spezifikation.md)):
   - `batched-fsync` (Default; ≤ 100 ms oder ≤ 1000 Einträge):
     `Write` puffert intern, wartet auf den Batch-Sync und kehrt
@@ -633,88 +666,123 @@ Audit-Sink ein:
   [`HSM-DATA-001`](../../../../spec/spezifikation.md);
   Klartext-/Schlüssel-/Cipher-Inhalt ist verboten
   ([`HSM-FA-AUDIT-003`](../../../../spec/lastenheft.md)).
-- **Pflichtfeld-Befüllung (Slice-002-Festlegung):** HSM-DATA-001
-  listet `request_id`, `trace_id`, `chunk_count`, `total_bytes`,
-  `error_class` als Pflichtfelder. In M1 fehlt sowohl die
-  Identitätsquelle (Slice 006) als auch der OTel-Stack
-  (eigener M2-Slice). Damit das Schema dennoch deterministisch
-  validierbar ist, gelten in Slice 002 diese Regeln:
-  - `request_id`: gRPC-Metadata-Header `x-request-id` falls
-    vorhanden, sonst serverseitig generierte UUIDv4 je Stream-
-    Annahme. Wird in der Server-Response als
-    `trailing-metadata` zurückgespiegelt (Korrelations-Hilfe).
-  - `trace_id`: gRPC-Metadata-Header `traceparent` (W3C
-    Trace-Context) falls vorhanden, sonst hex-encodierte 16-Byte-
-    UUIDv4 als Platzhalter. Slice 002 wertet `traceparent` nur
-    durch, baut keinen aktiven Tracer; der vollständige OTel-
-    Anschluss folgt im Observability-Slice (M2).
-  - `chunk_count` / `total_bytes`: pro `audit-attempt` der
-    **bis zu diesem Versuch verarbeitete Klartext-Stand**, nicht der
-    bereits emittierte Stand (Emission erfolgt erst nach durablem
-    `audit-attempt`). Bei `result=ok`: `chunk_count = seq` und
-    `total_bytes = Summe der Klartext-Bytes bis einschließlich seq`;
-    bei `result=error`: derselbe Versuchskontext, ohne daraus einen
-    `emit-commit` abzuleiten. Der letzte erfolgreiche `audit-attempt`
-    des Streams trägt damit automatisch die Endwerte; ein zusätzlicher
-    Schluss-Eintrag ist nicht nötig
-    und wäre auch nicht spec-konform — HSM-DATA-001 legt die
-    zulässigen `operation`-Werte abschließend fest
-    (`encrypt`/`decrypt`/`key-lookup`/`key-rotate`/`error`). Die
-    Stream-Aggregate sind zusätzlich über das gRPC-`EncryptFinal`
-    transportiert und im Trace nachvollziehbar.
-  - `error_class`: bei `result=ok` der konstante String
-    `"none"` (nicht leerer String, nicht `null`, damit die
-    Schema-Validierung deterministisch greift); bei
-    `result=error` die Klasse aus der CKR-Mapping-Tabelle
-    (siehe §Retry-Klassifikation).
-  - `STREAM_ABORTED`: bei Client-Cancel, Netzwerkabbruch oder lokalem
-    Stream-Abbruch vor `stream-final-commit` wird ein zusätzlicher
-    Audit-Eintrag mit `operation=error`, `result=error` und
-    `error_class=STREAM_ABORTED` durabel persistiert
-    ([`HSM-FA-CHUNK-007`](../../../../spec/spezifikation.md)).
-- **Caller-Default:** In Slice 002 wird `caller=unauthenticated`
-  als expliziter Platzhalter gesetzt (kein `anonymous@<peer-addr>`
-  — diese Form ist nach
-  [`HSM-API-GRPC-008`](../../../../spec/spezifikation.md) für
-  abgewiesene Header-Source-Anfragen reserviert und darf nicht für
-  akzeptierte Streams verwendet werden). Damit ist die Audit-
-  Caller-Pflicht aus
-  [`HSM-DATA-001`](../../../../spec/spezifikation.md) /
-  [`HSM-API-GRPC-008`](../../../../spec/spezifikation.md) in Slice 002
-  **nicht** vollständig erfüllt; die Erfüllung kommt mit Slice 006
-  (Identity-Source), das echte mTLS-/Header-Identitäten liefert.
-  `tenant_id` bleibt `default`.
+- **Pflichtfeld-Befüllung (Slice-002b-Festlegung):** HSM-DATA-001
+  listet 15 Pflichtfelder. Slice 002b liefert für `caller` den
+  minimalen `mtls-subject`-Pfad und verwendet für Tracing noch einen
+  deterministischen Platzhalter, solange der vollständige OTel-Stack
+  erst in M2 kommt. Damit das Schema deterministisch validierbar ist,
+  legt Slice 002b für jedes Pflichtfeld eine Quelle fest:
+
+  | Feld           | Quelle in Slice 002b                                                                                                                           |
+  | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `timestamp`    | Aus `AuditClock` in UTC, RFC 3339 mit Nanosekunden, monoton steigend pro Stream (Re-Read vom Audit-Sink prüft Monotonie je Stream).             |
+  | `operation`    | `encrypt` für jeden `audit-attempt` mit `result=ok`/`result=error`; `error` für `STREAM_ABORTED`- und `AUDIT_DURABILITY_FAILED`-Sonderfälle.    |
+  | `key_id`       | Aus `EncryptHeader.key_id` (Proto, Stream-Annahme).                                                                                            |
+  | `key_version`  | Serverseitig aus `KeyRegistry.LookupActive` aufgelöst (siehe §HeaderMAC-Port). Im Stream invariant durch den `KeyRef`-Snapshot.                |
+  | `doc_id`       | Aus `EncryptHeader.doc_id` (Proto, Stream-Annahme). Leer ist Schema-Fehler → Stream-Reject mit `INVALID_ARGUMENT`; Slice 002b schreibt also nie einen `audit-attempt` mit leerem `doc_id`. |
+  | `caller`       | Aus dem verifizierten mTLS-Peer-Zertifikat (`subject_dn` oder `san_uri`, siehe gRPC-Adapter §mTLS-/Caller-Minimalpfad). Leer/fehlend wird vor Use-Case-Aufruf mit `UNAUTHENTICATED` abgelehnt. |
+  | `tenant_id`    | Kanonischer Server-Tenant `default` in Slice 002b; abweichende Header-Werte werden vor Key-Lookup abgelehnt. Multi-Tenant ab M4.                |
+  | `result`       | `ok` (Versuch lieferte Ciphertext) oder `error` (Versuch scheiterte).                                                                          |
+  | `error_class`  | Bei `result=ok` der konstante String `"none"` (nicht leer, nicht `null`, damit Schema-Validierung deterministisch greift); bei `result=error` die Klasse aus der CKR-Mapping-Tabelle (§Retry-Klassifikation). |
+  | `attempt`      | 1-basierter Versuchszähler pro `(stream_id, seq)`. Erfolgreicher Versuch erhöht den Zähler nicht — er trägt den Wert seines Versuchs (z. B. `attempt=4` nach drei transienten Fehlern). |
+  | `chunk_count`  | Pro `audit-attempt` der **bis zu diesem Versuch verarbeitete Klartext-Stand**: bei `result=ok` gleich `seq`; bei `result=error` der zum Versuch gehörige `seq`. Niemals der bereits emittierte Stand. |
+  | `total_bytes`  | Summe der Klartext-Bytes bis einschließlich des aktuellen `seq` (analog `chunk_count`).                                                        |
+  | `request_id`   | gRPC-Metadata-Header `x-request-id` falls vorhanden, sonst serverseitig generierte UUIDv4 je Stream-Annahme. Server spiegelt den Wert in `trailing-metadata` zurück (Korrelations-Hilfe). |
+  | `trace_id`    | gRPC-Metadata-Header `traceparent` (W3C Trace-Context) falls vorhanden — extrahiert den 16-Byte-Trace-Id-Teil. Sonst hex-encodierte 16-Byte-UUIDv4 als Platzhalter. Slice 002b reicht `traceparent` nur durch, baut keinen aktiven Tracer; der vollständige OTel-Anschluss folgt im Observability-Slice (M2). |
+  | `stream_id`    | UUIDv4 vom Server bei Stream-Annahme generiert ([`HSM-DATA-004`](../../../../spec/spezifikation.md)).                                          |
+
+  Der letzte erfolgreiche `audit-attempt` des Streams trägt damit
+  automatisch die Endwerte; ein zusätzlicher Schluss-Eintrag ist
+  nicht nötig und wäre auch nicht spec-konform — HSM-DATA-001 legt
+  die zulässigen `operation`-Werte abschließend fest
+  (`encrypt`/`decrypt`/`key-lookup`/`key-rotate`/`error`). Die
+  Stream-Aggregate sind zusätzlich über das gRPC-`EncryptFinal`
+  transportiert und im Trace nachvollziehbar.
+
+- **Trusted-Time-Vertrag für HSM-FA-AUDIT-005:** Slice 002b führt einen
+  kleinen Clock-Port `AuditClock.Now(ctx) (time.Time, ClockStatus, error)`
+  ein. Der File-Audit-Adapter nimmt Zeitstempel ausschließlich aus diesem
+  Port entgegen; direkte `time.Now()`-Aufrufe im Audit-Pfad sind per
+  Code-Review- und Unit-Test-Check verboten. Der Produktionsadapter nutzt
+  die Systemuhr nur, wenn `HSMDOC_TIME_SOURCE=system-ntp` gesetzt ist und
+  beim Start eine explizite Trust-Assertion vorliegt
+  (`HSMDOC_TIME_TRUSTED=true`, gesetzt durch Deployment/Node-Baseline).
+  Ohne diese Assertion startet der Service mit
+  `STARTUP_TIME_SOURCE_UNTRUSTED` nicht. Der CI-/Unit-Test-Pfad nutzt
+  einen Fake-Clock-Adapter, um Monotonie und Fehlerpfade deterministisch
+  zu prüfen. Die spätere Helm-/Kind-Integration aus Slice 005 belegt die
+  Node-/Cluster-Seite der NTP-Synchronisation; 002b stellt sicher, dass
+  der Service keine Audit-Zeitstempel ohne explizit vertrauenswürdige
+  Zeitquelle akzeptiert.
+
+- Sonderfall `STREAM_ABORTED`: bei Client-Cancel, Netzwerkabbruch
+  oder lokalem Stream-Abbruch vor `stream-final-commit` wird ein
+  zusätzlicher Audit-Eintrag mit `operation=error`, `result=error`
+  und `error_class=STREAM_ABORTED` durabel persistiert
+  ([`HSM-FA-CHUNK-007`](../../../../spec/spezifikation.md)).
+  `attempt` trägt dabei den letzten begonnenen Versuchswert,
+  `chunk_count`/`total_bytes` den zuletzt erreichten Stand.
+- **Caller-Quelle:** In Slice 002b gibt es keinen
+  `caller`-Platzhalter für akzeptierte Streams. Der Wert kommt aus dem
+  verifizierten mTLS-Peer-Zertifikat (`subject_dn` oder `san_uri`).
+  Fehlt ein gültiges Client-Zertifikat oder ist das konfigurierte
+  Attribut leer, wird der Stream vor Key-Lookup mit
+  `UNAUTHENTICATED` bzw. `IDENTITY_MISSING` abgelehnt. Die Header-
+  Quelle und Peer-Allowlist aus
+  [`HSM-API-GRPC-006..008`](../../../../spec/spezifikation.md) bleiben
+  Slice 006; `tenant_id` bleibt in 002b der kanonische Wert `default`.
 - **Abgrenzung:** **Keine Hash-Chain, keine Signatur, keine externe
-  Verankerung, kein Verify-Tool** in Slice 002. Die Basis-Hash-Chain
+  Verankerung, kein Verify-Tool** in Slice 002b. Die Basis-Hash-Chain
   ([`HSM-FA-AUDIT-002`](../../../../spec/lastenheft.md)) ist
-  M1-Scope und kommt in Slice 004 vor M1-Closure. Slice 002 schreibt
+  M1-Scope und kommt in Slice 004 vor M1-Closure. Slice 002b schreibt
   nur die Durability- und Reihenfolge-Pflicht aus HSM-FA-AUDIT-005/010,
   plus Pflichtfelder + Klartext-Verbot; Slice 004 ergänzt
   Manipulationsschutz ohne Port-Bruch. Die regulierten Detail-
   Verfahren ([`HSM-FA-AUDIT-006..008`](../../../../spec/spezifikation.md))
   sind M2-Scope.
 - **Audit-Reihenfolge** `audit-attempt` vor `emit-commit` ist im
-  Encrypt-Use-Case verdrahtet und durch Cancel-/Sync-Fehler-Tests
-  abgedeckt.
+  Encrypt-Use-Case verdrahtet und durch Out-of-order-/Cancel-/Sync-
+  Fehler-Tests abgedeckt.
 
 ### Konfiguration (`internal/config/`)
 
 Neue Env-Variablen, alle in `Load()` validiert
 ([`HSM-OPS-CFG-001..002`](../../../../spec/lastenheft.md)).
 
-**Startup-Fehlerklassen (neu in Slice 002):** HSM-FA-FAIL-003
+**Startup-Fehlerklassen (neu in Slice 002b):** HSM-FA-FAIL-003
 normiert Laufzeit-Fehlerklassen aus PKCS#11-Returncodes, sagt
-aber nichts über Start-Validierungsfehler. Slice 002 etabliert
+aber nichts über Start-Validierungsfehler. Slice 002b etabliert
 deshalb eine `STARTUP_*`-Sammelklasse für deterministische
-Start-Abbrüche, exit-code ≠ 0 mit eindeutigem Log-String. Die
-in diesem Slice eingeführten Codes:
+Start-Abbrüche, exit-code ≠ 0 mit eindeutigem Log-String. Die in
+diesem Slice eingeführten Codes:
 `STARTUP_PKCS11_DLOPEN_FAILED` (Closure-Smoke schlägt fehl),
 `STARTUP_PKCS11_PIN_AMBIGUOUS` (mehr als eine PIN-Quelle gesetzt),
-`STARTUP_PKCS11_PIN_MISSING` (keine PIN-Quelle gesetzt). Folge-
-Slices ergänzen weitere `STARTUP_*`-Codes nach Bedarf; ein
-eigener Spec-Eintrag (z. B. HSM-FA-FAIL-008) kann später aus
-der Sammlung abgeleitet werden, ist aber kein 002-Scope.
+`STARTUP_PKCS11_PIN_MISSING` (keine PIN-Quelle gesetzt),
+`STARTUP_PKCS11_PIN_DEV_FORBIDDEN` (`PIN_DEV` im Produktionsmodus
+oder Produktionsimage) und `STARTUP_PKCS11_CGO_DISABLED`
+(PKCS#11-Adapter ohne CGO initialisiert) sowie
+`STARTUP_IDENTITY_CLIENT_CA_MISSING` (`mtls-subject`-M1-Pfad ohne
+Client-CA konfiguriert) und
+`STARTUP_TIME_SOURCE_UNTRUSTED` (Audit-Zeitquelle nicht explizit als
+NTP-synchronisiert vertrauenswürdig freigegeben). Weil diese Codes
+observable Test- und Betriebsoberfläche sind, ergänzt Slice 002b die
+Spezifikation im selben PR um einen neuen Abschnitt
+`HSM-FA-FAIL-010 — Startup-Validierungsfehler` und dokumentiert dort
+die eingeführten `STARTUP_*`-Codes samt gRPC-unabhängiger Exit-Semantik.
+Folge-Slices erweitern denselben Abschnitt additiv.
 
+- `HSMDOC_GRPC_CLIENT_CA` — PEM-Bundle der Client-CA für mTLS.
+  Pflicht in 002b, weil akzeptierte Encrypt-Streams einen echten
+  Audit-`caller` aus dem Client-Zertifikat brauchen. Fehlt der Wert
+  oder ist das Bundle unlesbar/ungültig, startet der Service mit
+  `STARTUP_IDENTITY_CLIENT_CA_MISSING` nicht. Slice 006 erweitert
+  diesen Minimalpfad später um `identity.source=header` und
+  Peer-Allowlist.
+- `HSMDOC_IDENTITY_MTLS_SUBJECT_ATTRIBUTE` — `subject_dn` (Default)
+  oder `san_uri`. Bestimmt, welcher Wert aus dem verifizierten
+  Client-Zertifikat als Audit-`caller` verwendet wird. Andere Werte
+  → Start-Abbruch; leerer extrahierter Wert → Anfrage-Abbruch mit
+  `IDENTITY_MISSING`.
 - `HSMDOC_PKCS11_MODULE` — Pfad zum Modul (`.so`/`.dll`). Pflicht.
 - `HSMDOC_PKCS11_SLOT` oder `HSMDOC_PKCS11_TOKEN_LABEL` — Slot-/Token-
   Auswahl. Genau eine Quelle Pflicht.
@@ -731,9 +799,11 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
     → Start-Abbruch.
   - `HSMDOC_PKCS11_PIN_DEV` — **nur Dev**. Wird nur akzeptiert,
     wenn `HSMDOC_ENV≠prod` und nicht im Container-Build aktiv
-    (siehe PKCS#11-Adapter-Abschnitt); jeder akzeptierte
-    Dev-Override emittiert eine Start-Warn-Log-Zeile mit Hinweis
-    auf HSM-FA-HSM-002.
+    (siehe PKCS#11-Adapter-Abschnitt). Das Produktionsimage trägt
+    einen Build-Marker; ist dieser Marker vorhanden, wird
+    `PIN_DEV` auch dann verweigert, wenn `HSMDOC_ENV` fehlt oder
+    falsch gesetzt ist. Jeder akzeptierte Dev-Override emittiert
+    eine Start-Warn-Log-Zeile mit Hinweis auf HSM-FA-HSM-002.
 - `HSMDOC_PKCS11_POOL_SIZE`, `_MAX_IDLE`, `_MAX_LIFETIME`,
   `_ACQUIRE_TIMEOUT`, `_LOGIN_RETRY` — Pool-Tuning, alle mit
   Defaults aus
@@ -752,6 +822,11 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
   ([`HSM-FA-QUEUE-002`](../../../../spec/spezifikation.md)).
 - `HSMDOC_QUEUE_WAIT_MS` — Wartezeit vor Ablehnung, Default 0
   ([`HSM-FA-QUEUE-003`](../../../../spec/spezifikation.md)).
+- `HSMDOC_INFLIGHT_PLAINTEXT_BYTES` — harte Byte-Grenze für Plaintext,
+  der gelesen, queued, in Bearbeitung oder im Reorder-Buffer gehalten
+  wird. Default und Grenzen siehe §Queue; Validierung ist gekoppelt an
+  `HSMDOC_MAX_HEAP_BYTES`, `HSMDOC_CHUNK_SIZE_BYTES` und
+  `HSMDOC_WORKERS`.
 - `HSMDOC_RETRY_BASE_MS` / `_FACTOR` / `_MAX_ATTEMPTS` — Exponential-
   Backoff-Parameter, Defaults 50 / 2 / 5
   ([`HSM-FA-RETRY-003`](../../../../spec/spezifikation.md)).
@@ -765,33 +840,46 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
 - `HSMDOC_AUDIT_SYNC_MODE` — `batched-fsync` (Default) oder
   `per-entry-fsync`
   ([`HSM-FA-AUDIT-010`](../../../../spec/spezifikation.md)).
+- `HSMDOC_TIME_SOURCE` — in 002b genau `system-ntp`. Andere Werte
+  sind reserviert und führen zu Start-Abbruch.
+- `HSMDOC_TIME_TRUSTED` — muss im Produktionspfad exakt `true` sein;
+  fehlt der Wert oder ist er anders gesetzt, startet der Service mit
+  `STARTUP_TIME_SOURCE_UNTRUSTED` nicht. CI-Tests dürfen den
+  Fake-Clock-Adapter verwenden und setzen diese Variable nicht.
 
 ### Lint-Regeln (`.golangci.yml`)
 
 - Re-Bewertung der Cross-Adapter-Sibling-Regel
   ([`offene-arbeitsfaeden.md` §1.1](../in-progress/offene-arbeitsfaeden.md)):
   Mit `driven/pkcs11/` zieht ein zweites Adapter-Sibling ein.
-  Slice 002 entscheidet dokumentiert, ob die Sibling-Filter-Regel
+  Slice 002b entscheidet dokumentiert, ob die Sibling-Filter-Regel
   jetzt sinnvoll wird (z. B. selektiv „driving darf driven nicht
   importieren, nur via Port") oder weiter aufgeschoben bleibt.
 
 ## Vorbedingungen für die Aktivierung
 
-1. **Slice 001** ist nach `done/` migriert (Akzeptanzkriterien laut
-   [`001-grpc-skeleton.md`](../in-progress/001-grpc-skeleton.md) §
-   „Akzeptanzkriterien" erfüllt). Ohne Skeleton kein Anschluss-Point.
-2. **CI-Bild** kann SoftHSM v2 installieren und initialisieren. Im
-   Build-Image-Pfad wird das über `apt-get install softhsm2` oder
-   ein vorgefertigtes Test-Image abgebildet; CI-Vorbedingung ist Teil
-   dieses Slices.
-3. **Open-Trigger 002** ist noch in `open/` (gegeben — siehe
-   [`002-distroless-base-fuer-cgo.md`](../open/002-distroless-base-fuer-cgo.md)).
-   Dieser Slice löst ihn ein.
-4. **Coverage-Schwellwert ≥ 80 %** bleibt erhalten — der neue
+**Reihenfolge der Vorbedingungen ist strikt seriell:** 1 (Slice 002a
+in `done/`, inkl. Folge-ADR zu `ADR 0001`, die das
+`next/<slice>/`-Sub-Pattern legitimiert) → 3 (HKDF-Spike unter
+`next/002b-spike-hkdf/` läuft + ist grün) → Slice 002b nach
+`in-progress/`. Vorbedingung 2 (Coverage) ist eine fortlaufende
+Anforderung, kein Reihenfolge-Gate. Damit ist die Spike-Ablage nicht
+zirkulär: die Sub-Verzeichnis-Legitimation kommt aus 002a, der Spike
+darf erst danach starten.
+
+1. **Slice 002a** ist nach `done/` migriert (CGO-Build-Pipeline,
+   `pkcs11-dlopen-smoke`-Binary, Closure-Verifikation, ADR 0004,
+   Folge-ADR zur Planstruktur — alles laut Akzeptanz von 002a).
+   Ohne 002a kein CGO-Pfad, kein dlopen-Smoke, keine Vendor-Modul-
+   Vorbereitung im CI und keine ADR-Grundlage für den
+   `next/002b-spike-hkdf/`-Sub-Pfad.
+2. **Coverage-Schwellwert ≥ 80 %** bleibt erhalten — der neue
    Adapter + Domain-Layer wird per Unit-Tests + Integrationstests
    abgedeckt; Integrationstests laufen mit Build-Tag und werden in
-   die Coverage-Aggregation einbezogen.
-5. **`CKM_HKDF_DERIVE`-Spike** muss vor Slice-Aktivierung grün sein.
+   die Coverage-Aggregation einbezogen (siehe Akzeptanz §1).
+3. **`CKM_HKDF_DERIVE`-Spike** muss vor Slice-Aktivierung grün sein
+   (zeitlich nach Vorbedingung 1, weil das Sub-Verzeichnis-Pattern
+   erst durch die Folge-ADR aus 002a explizit zulässig ist).
    Das vorgeschriebene Go-Binding
    ([`github.com/miekg/pkcs11`](https://pkg.go.dev/github.com/miekg/pkcs11),
    `HSM-API-P11-003`) hat keine native Unterstützung für
@@ -800,8 +888,9 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
    gewählte zweite herstellerfremde OSS-Modul — Default
    OpenCryptoki), nicht nur SoftHSM. Dadurch wird verhindert, dass
    `CKM_AES_GCM` + `CKM_HKDF_DERIVE` erst im späten Akzeptanztest
-   am Zweitmodul scheitern. Drei Pfade — Ergebnis in ADR 0004
-   protokolliert:
+   am Zweitmodul scheitern. Drei Pfade — Ergebnis in einer neuen
+   Folge-ADR zu ADR 0004 (geplant: `ADR 0005 —
+   HKDF-Profil-A-Binding`) protokolliert:
    - (a) **Shim:** `CK_HKDF_PARAMS` wird als `[]byte` korrekt
      serialisiert (C-Struct-Layout aus PKCS#11 v3.0 §6.31) und über
      `pkcs11.NewMechanism(CKM_HKDF_DERIVE, paramBytes)` an
@@ -814,26 +903,27 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
      `go.mod` dokumentiert, und der Spike bestätigt
      funktionierende Ableitung **auf beiden Modulen**.
    - (c) **Fallback-Eskalation:** Beide oben schlagen auf einem
-     der Module fehl. Slice 002 wird zurück zur Planung
+     der Module fehl. Slice 002b wird zurück zur Planung
      geschoben — entweder mit Profil B als M1-Pfad (vendor-
      spezifische Non-Export-Konstruktion) oder mit einer
      Binding-Wechsel-Entscheidung als eigener Open-Trigger oder
      mit einem anderen Zweitmodul.
 
    Die Wahl des Zweitmoduls (Modulpfad, Token-Konfiguration,
-   verifizierte Mechanismen) ist Teil des Spike-Outputs und wird
-   in ADR 0004 festgehalten **bevor** Slice 002 nach `in-progress/`
-   wandert.
+   erwartete Mechanismen) ist bereits in Slice 002a (ADR 0004)
+   festgehalten; der Spike validiert, dass `CKM_HKDF_DERIVE`
+   gegen genau dieses Modul funktioniert. Das Validierungsergebnis,
+   der gewählte Binding-Pfad (Shim oder Fork) und ggf. die
+   Fallback-Entscheidung werden nicht nachträglich in ADR 0004
+   geschrieben, weil ADR 0004 nach 002a `Accepted` ist.
 
    **Spike-Ablage:** Der Spike läuft komplett in `next/` als
-   eigenes Sub-Artefakt unter `next/002-spike-hkdf/`. Das
-   Sub-Verzeichnis-Pattern unter `next/` wird hier neu
-   eingeführt — ADR 0001 §2.3 regelt nur den Slice-Lifecycle
-   (`next/` → `in-progress/` → `done/`), nicht das Innenleben
-   der einzelnen Stufen, und ein Sub-Verzeichnis pro Slice ist
-   dort nicht ausgeschlossen. Layout:
+   eigenes Sub-Artefakt unter `next/002b-spike-hkdf/`. Das
+   Sub-Verzeichnis-Pattern unter `next/` ist durch die Folge-ADR zu
+   `ADR 0001` aus Slice 002a jetzt explizit zulässig. Layout:
    - `README.md` — Vorgehen, geprüfte Pfade (a/b/c), Ergebnis,
-     Verweis auf ADR-0004-Entscheidung.
+     Verweis auf ADR 0004 (Modulwahl) und ADR 0005
+     (Binding-/HKDF-Entscheidung).
    - `spike/` — minimaler Go-Code, der `C_DeriveKey` mit
      `CKM_HKDF_DERIVE` gegen beide CI-Module aufruft (kein
      Application-Code, isoliert vom restlichen Repo per Build-Tag
@@ -841,19 +931,64 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
    - `trace/` — PKCS#11-Aufrufprotokoll (SoftHSM-Log bzw.
      `pkcs11-spy`-Output) pro Modul als reproduzierbarer Beleg.
 
-   Sobald der Spike grün ist und ADR 0004 die Entscheidung
-   protokolliert, wandert das `next/002-spike-hkdf/`-Verzeichnis
-   mit dem Slice nach `in-progress/` (und später nach `done/`)
-   als historischer Spike-Nachweis. Slice 002 wird **nicht** ohne
-   diesen Spike-Output aktiviert.
+   Sobald der Spike grün ist, wandert das `next/002b-spike-hkdf/`-
+   Verzeichnis mit dem Slice nach `in-progress/` (und später nach
+   `done/`) als historischer Spike-Nachweis. Slice 002b wird
+   **nicht** ohne diesen Spike-Output aktiviert. Der Spike erzeugt
+   außerdem die Folge-ADR zu ADR 0004 (geplant: ADR 0005) und den
+   ADR-Index-Eintrag; ohne diese ADR-Spur wird 002b nicht nach
+   `in-progress/` migriert.
 
 ## Akzeptanzkriterien
 
-- `make ci` läuft grün gegen den Slice-002-Code (Lint inkl.
-  `depguard`-Regeln, Unit-Tests, Coverage ≥ 80 % auf `./internal/...`,
-  docs-check, govulncheck).
+- `make ci` läuft grün gegen den Slice-002b-Code (Lint inkl.
+  `depguard`-Regeln, Pure-Go-Unit-Tests, CGO-Integrationstests,
+  Coverage ≥ 80 % auf `./internal/...`, docs-check, `proto-check`,
+  `proto-breaking`, govulncheck). Slice 002b erweitert den
+  Makefile-Aggregator so, dass `ci` nicht nur `gates + govulncheck`
+  ausführt, sondern auch die neuen Proto- und Integration-Gates.
+  `make test` bleibt der schnelle `CGO_ENABLED=0`-Pure-Go-Lauf; der
+  PKCS#11-Adapter kompiliert dort über den `!cgo`-Stub. Der neue
+  `make integration`-Pfad läuft mit `CGO_ENABLED=1` und lädt den
+  realen Adapter gegen SoftHSM v2 und das zweite OSS-Modul.
+  - **Neuer Test-Pfad `test/integration/`:** Slice 002b legt das
+    Verzeichnis `test/integration/` an (existiert heute nicht).
+    Dort leben Go-Tests mit Build-Tag `integration`, die gegen
+    SoftHSM v2 und das zweite OSS-Modul laufen und den PKCS#11-
+    Adapter im Testprozess end-to-end exerzieren. Unit-Tests
+    bleiben unter `./internal/...` mit dem Standard-Build-Tag.
+  - **Coverage-Mechanik-Umbau:** Die bestehende Docker-`coverage`-
+    Stage ([`Dockerfile`](../../../../Dockerfile) §coverage, aktuell
+    `CGO_ENABLED=0 go test -coverprofile ... ./...`) wird auf zwei
+    separate Läufe + `gocovmerge` umgestellt. Der bestehende Ausschluss
+    von generiertem Code bleibt erhalten: `COVERPKG` wird wie heute
+    über `go list ./internal/...` gebildet und filtert
+    `github.com/pt9912/c-hsm-doc/internal/gen/` heraus. Beide Läufe
+    verwenden exakt denselben gefilterten `COVERPKG`-Wert;
+    `internal/gen/**` darf nicht in das 80-%-Gate einfließen.
+    1. `CGO_ENABLED=0 go test -coverprofile=unit.out
+       -coverpkg="$COVERPKG" ./internal/...` (Unit-Lauf; PKCS#11-
+       Paket über `!cgo`-Stub kompilierbar, kein
+       `github.com/miekg/pkcs11`-Import).
+    2. `CGO_ENABLED=1 go test -tags=integration
+       -coverprofile=integration.out -coverpkg="$COVERPKG"
+       ./test/integration/...` (CGO + SoftHSM-Pfad, Server und
+       Adapter in-process, damit `-coverpkg` den ausgeführten
+       Produktivcode erfasst, ohne generierte Stubs zu bewerten).
+    3. `gocovmerge unit.out integration.out > merged.out`.
+    4. `scripts/coverage-gate.sh` (aktuell auf
+       `coverage-func.txt` aus einem einzelnen Profil) wird in
+       002b so erweitert, dass es `merged.out` als Eingabe
+       akzeptiert. Das 80-%-Gate wertet ab dann ausschließlich
+       `merged.out`. Damit fällt der PKCS#11-Adapter, der nur
+       unter Integrationstest geladen wird, nicht aus dem
+       Aggregat. `gocovmerge` wird neu als Go-Tool-Dependency
+       eingezogen (über die `tool`-Direktive in `go.mod`; das
+       Repo läuft bereits auf Go 1.26).
 - **SoftHSM-Integrationstest** (neuer `make ci` Sub-Target oder
-  Build-Tag-Test):
+  Build-Tag-Test; in-process für Coverage, separate Smoke-Targets
+  dürfen zusätzlich den Runtime-Container als externen Prozess
+  starten):
   - SoftHSM v2 wird im CI initialisiert (Slot, Token-Label,
     AES-256-Schlüssel mit `CKA_EXTRACTABLE=false` **und**
     Master-HMAC-Key vom Typ `CKO_SECRET_KEY` /
@@ -861,7 +996,9 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
     `CKA_SENSITIVE=true`, `CKA_DERIVE=true` — Voraussetzung für
     den HKDF-Profil-A-Pfad gemäß HSM-FMT-006). Beide Labels werden
     in einer Test-Key-Registry-Datei eingetragen.
-  - Encrypt-Stream über `grpcurl`/Test-Client mit 100 MiB Klartext.
+  - Encrypt-Stream über einen in-process Test-Client mit 100 MiB
+    Klartext; ein zusätzlicher `grpcurl`-Smoke gegen den Runtime-
+    Container ist zulässig, aber nicht die Coverage-Quelle.
   - Container wird vollständig empfangen, Header + Frames + Trailer
     spec-konform encodiert (binär-vergleichbar gegen Referenzlayout).
     Test-Client liest `container_header`, alle `DataChunk` in
@@ -882,6 +1019,15 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
   PR-CI-Laufzeit sprengt, läuft er als Nightly-Job mit
   Release-Block-Charakter (kein grüner Release ohne grünen
   10-GiB-Job).
+- **In-flight-Byte-Grenze:** Testmatrix für
+  `HSMDOC_CHUNK_SIZE_BYTES`, `HSMDOC_WORKERS`,
+  `HSMDOC_QUEUE_DEPTH`, `HSMDOC_MAX_HEAP_BYTES` und
+  `HSMDOC_INFLIGHT_PLAINTEXT_BYTES` belegt: Der Start bricht ab, wenn
+  die berechnete Plaintext-In-flight-Grenze nicht in das Heap-Cap passt;
+  unter Last blockiert der Reader an der Byte-Semaphore, statt weitere
+  Chunks in die Queue zu legen. Der 10-GiB-Memory-Probe zeigt zusätzlich,
+  dass Queue, Worker und Reorder-Buffer gemeinsam unter der konfigurierten
+  Grenze bleiben.
 - **Cancellation** ([`HSM-FA-STREAM-004`](../../../../spec/spezifikation.md)):
   100-paralleler-Stream-Cancel-Test zeigt ≤ 100 ms zwischen Cancel
   und letztem `C_EncryptInit` für diesen Stream (PKCS#11-Trace).
@@ -894,6 +1040,15 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
 - **Mechanismus-Check** ([`HSM-FA-HSM-005`](../../../../spec/spezifikation.md)):
   Start gegen ein modifiziertes SoftHSM-Setup ohne `CKM_AES_GCM`
   scheitert deterministisch mit Hinweis auf fehlenden Mechanismus.
+- **mTLS-Caller-Pfad** ([`HSM-API-GRPC-003`](../../../../spec/lastenheft.md),
+  [`HSM-API-GRPC-008`](../../../../spec/spezifikation.md)):
+  Integrationstest mit gültigem Client-Zertifikat zeigt, dass
+  `caller` im Audit-Eintrag aus `subject_dn` bzw. `san_uri` stammt.
+  Client ohne Zertifikat wird mit `UNAUTHENTICATED` abgelehnt, bevor
+  Key-Lookup oder HSM-Operation starten. Start ohne lesbares
+  `HSMDOC_GRPC_CLIENT_CA` scheitert mit
+  `STARTUP_IDENTITY_CLIENT_CA_MISSING`. Akzeptierte Streams enthalten
+  keinen Platzhalter-Caller.
 - **PIN-Hygiene** ([`HSM-FA-HSM-002`](../../../../spec/lastenheft.md)):
   Image-Scan und Log-Scan finden keine PIN. Datei-Mode-Tests:
   - `0400` mit Datei-UID = Prozess-UID → akzeptiert.
@@ -906,8 +1061,12 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
   - Modi außerhalb der Whitelist (`0444`, `0460`, `0660`, `0644`,
     `0777`, …) → Start-Abbruch.
   `HSMDOC_PKCS11_PIN_DEV` mit `HSMDOC_ENV=prod` führt zu
-  Start-Abbruch; akzeptierter Dev-Override loggt unmittelbar nach
-  dem Start eine Warnung mit Verweis auf HSM-FA-HSM-002.
+  Start-Abbruch. Derselbe `PIN_DEV`-Wert im produktiven Runtime-Image
+  führt auch bei fehlendem oder falsch gesetztem `HSMDOC_ENV` zu
+  `STARTUP_PKCS11_PIN_DEV_FORBIDDEN`; der Test prüft den
+  Build-Marker-Pfad explizit. Akzeptierter Dev-Override loggt
+  unmittelbar nach dem Start eine Warnung mit Verweis auf
+  HSM-FA-HSM-002.
 - **Exponential Backoff + Jitter** ([`HSM-FA-RETRY-003`](../../../../spec/spezifikation.md)):
   Retry-Test mit gemockten transienten PKCS#11-Fehlern zeigt:
   Wartezeiten zwischen Versuchen folgen `base * factor^attempt`
@@ -947,7 +1106,7 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
   mit `HSM_REMOVED`/`HSM_TOKEN_GONE` ab; neue Encrypt-Anfragen
   werden mit `UNAVAILABLE` abgelehnt. Das ist ein partieller
   Sicherheits-Smoke, **keine vollständige HSM-FA-FAIL-003-Erfüllung**.
-  Reconnect und Circuit-Breaker sind nicht Bestandteil der 002-
+  Reconnect und Circuit-Breaker sind nicht Bestandteil der 002b-
   Akzeptanz — der Service bleibt rot, bis er neu gestartet wird; das
   ist dokumentierte M1-Einschränkung (Slice 009 schließt sie).
 - **Audit-Durability** ([`HSM-FA-AUDIT-010`](../../../../spec/spezifikation.md),
@@ -956,14 +1115,30 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
   Stream mit `AUDIT_DURABILITY_FAILED` ab; **kein** Ciphertext-Chunk
   wird emittiert, dessen Audit-Eintrag nicht durabel ist. Reihenfolge
   `audit-attempt → emit-commit` ist im Test sichtbar (Audit-Datei
-  enthält den Eintrag vor der Stream-Antwort).
-- **Audit-Pflichtfelder** ([`HSM-FA-AUDIT-001`](../../../../spec/lastenheft.md),
+  enthält den Eintrag vor der Stream-Antwort). Ein separater
+  Out-of-order-Test erzwingt, dass Worker `seq=2` vor `seq=1` in den
+  Zustand `SEALED` bringen: Audit-Datei und gRPC-Response bleiben
+  trotzdem strikt in `seq=1,2,...`-Reihenfolge; der Dateiadapter würde
+  einen out-of-order `AuditSink.Write` defensiv ablehnen.
+- **Trusted-Time-Gate** ([`HSM-FA-AUDIT-005`](../../../../spec/lastenheft.md)):
+  Start ohne `HSMDOC_TIME_SOURCE=system-ntp` und
+  `HSMDOC_TIME_TRUSTED=true` bricht mit
+  `STARTUP_TIME_SOURCE_UNTRUSTED` ab; akzeptierter Start schreibt eine
+  strukturierte Startup-Log-Zeile mit Zeitquellenmodus. Audit-Unit-Tests
+  nutzen einen Fake-Clock-Adapter und belegen monotone Timestamps pro
+  Stream sowie Fehlerpropagation, wenn der Clock-Port einen untrusted
+  Status liefert. Code-Review-Akzeptanz: im Audit-Pfad gibt es keinen
+  direkten `time.Now()`-Aufruf außerhalb des Clock-Adapters.
+- **Audit-Pflichtfelder** (Erfüllung für den 002b-Encrypt-Pfad von
+  [`HSM-FA-AUDIT-001`](../../../../spec/lastenheft.md),
   [`HSM-FA-AUDIT-003`](../../../../spec/lastenheft.md),
   [`HSM-DATA-001`](../../../../spec/spezifikation.md)):
-  Jeder JSONL-Eintrag enthält alle in HSM-DATA-001 geforderten
-  Pflichtfelder; Schema-Validierungs-Test scheitert deterministisch
-  bei fehlendem Feld. Klartext-/Schlüssel-/PIN-Scan über die
-  Audit-Datei findet keine Treffer.
+  Jeder JSONL-Eintrag enthält strukturell alle in HSM-DATA-001
+  geforderten Pflichtfelder; Schema-Validierungs-Test scheitert
+  deterministisch bei fehlendem Feld. `caller` stammt aus dem
+  verifizierten mTLS-Peer-Zertifikat; leere oder fehlende Identität
+  erzeugt keinen akzeptierten Encrypt-Stream. Klartext-/Schlüssel-/PIN-
+  Scan über die Audit-Datei findet keine Treffer.
 - **Proto- und Spec-Update** ([`spec/proto/chsmdocv1/c_hsm_doc.proto`](../../../../spec/proto/chsmdocv1/c_hsm_doc.proto)
   und [`spec/spezifikation.md`](../../../../spec/spezifikation.md)):
   - `EncryptResponse.oneof body` ist um `bytes container_header = 4`
@@ -971,7 +1146,7 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
     (`internal/gen/chsmdocv1/`) sind regeneriert und im Commit.
   - `DecryptRequest.oneof body` ist additiv um spiegelbildliche
     `bytes container_header` und `bytes container_trailer`-Felder
-    vorbereitet — Slice 003 nutzt sie, Slice 002 lässt sie auf
+    vorbereitet — Slice 003 nutzt sie, Slice 002b lässt sie auf
     Server-Seite leer (`UNIMPLEMENTED`-Stub bleibt) bis Decrypt
     landet. Die Vorbelegung jetzt vermeidet ein zweites
     Schema-Diff für Slice 003.
@@ -980,7 +1155,7 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
     `REVOKED`-Enum wird vor produktiver Nutzung ersetzt, damit Proto
     und HSM-FA-KEY-001 dieselbe Zustandsmenge verwenden.
   - Spec-Text in `spezifikation.md` §HSM-API-GRPC-005 dokumentiert,
-    dass Slice-002-Detailcodes (`KEY_REGISTRY_AMBIGUOUS`,
+    dass Slice-002b-Detailcodes (`KEY_REGISTRY_AMBIGUOUS`,
     `KEY_STATE_INVALID`, `ADAPTER_BUFFER_UNDERSIZED`) keine neuen
     Fehlerklassen sind: sie mappen auf bestehende Fehlerklassen
     `INTERNAL` bzw. `KEY_NOT_FOUND` und damit auf die vorhandenen
@@ -988,18 +1163,54 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
   - Spec-Text in `spezifikation.md` §HSM-API-GRPC-* dokumentiert
     den Wire-Ablauf (Ack → container_header → DataChunk* →
     container_trailer → Final) als verbindliche Reihenfolge.
+  - Spec-Text in `spezifikation.md` ergänzt
+    `HSM-FA-FAIL-010 — Startup-Validierungsfehler` mit den in 002b
+    eingeführten `STARTUP_*`-Codes:
+    `STARTUP_PKCS11_DLOPEN_FAILED`,
+    `STARTUP_PKCS11_PIN_AMBIGUOUS`,
+    `STARTUP_PKCS11_PIN_MISSING`,
+    `STARTUP_PKCS11_PIN_DEV_FORBIDDEN`,
+    `STARTUP_PKCS11_CGO_DISABLED`,
+    `STARTUP_IDENTITY_CLIENT_CA_MISSING` und
+    `STARTUP_TIME_SOURCE_UNTRUSTED`.
+  - **Spec-Update-Charakter:** Die neuen Oneof-Felder, Detailcodes
+    und der Wire-Ablauf sind additive technische Klärungen. Der
+    Enum-Name-Wechsel `REVOKED → DESTROYED` ist dagegen ein bewusst
+    akzeptierter Proto-Source/API-Break vor produktiver Nutzung, kein
+    additives Detail. Damit liegen die Änderungen außerhalb des
+    ADR-0001-Immutability-Regimes (ADR 0001 §2.3 regelt
+    ADR-Immutability, nicht Spec-Versionierung); die Klärung läuft im
+    selben PR wie der Code-Diff und ist als „Spec-Klarstellung Slice
+    002b" in der Commit-Message gekennzeichnet. Ein eigener Spec-
+    Versionssprung ist nicht erforderlich.
   - Backwards-Compat-Check: Slice 001 hat nur `UNIMPLEMENTED`-
     Stubs ausgeliefert, deshalb gibt es keine Konsumenten — die
-    additive Oneof-Erweiterung ist proto-kompatibel
-    (`buf breaking` läuft im CI mit Allowlist für additive
-    Oneof-Felder).
-- **Open-Trigger 002** wird im selben PR nach `done/` migriert (oder
-  re-bewertet, falls Scope sich geändert hat).
-- **ADR 0004 angelegt + ADR-Index aktualisiert.** Status `Accepted`,
-  Verweis auf ADR 0002 als geschärfte Vorgängerin gemäß
-  [ADR 0001 §2.3](../../adr/0001-documentation-and-planning-structure.md).
-  Image-Größe + Trivy-Scan-Ergebnis sind im ADR dokumentiert. Ein
-  Slice 002 ohne ADR-Spur ist nicht abnahmefähig.
+    additive Oneof-Erweiterung ist wire-kompatibel; der Enum-Value-
+    Rename `REVOKED → DESTROYED` hält zwar den numerischen Wert `3`
+    stabil, ist aber für generierten Go-Code ein Source/API-Break.
+    Er ist nur deshalb akzeptabel, weil Slice 001 ausschließlich
+    `UNIMPLEMENTED`-Stubs geliefert hat und keine produktiven
+    Konsumenten existieren. Slice 002b führt dazu ein neues
+    Docker-only-Make-Target `proto-breaking` ein und hängt
+    `proto-check` + `proto-breaking` in `make ci` ein. Das Target ist
+    trotz `.dockerignore` reproduzierbar: Host-`git` ermittelt den
+    Merge-Base von Slice-002b-Branch und `origin/main`, exportiert
+    ausschließlich `spec/proto/` dieses Commits per `git archive` in
+    ein temporäres Baseline-Verzeichnis unter `out/proto-breaking/`,
+    und startet danach das gepinnte `bufbuild/buf`-Container-Image mit
+    zwei read-only Mounts (`baseline` und aktueller Workspace). Im
+    Container läuft `buf breaking` gegen diese Baseline; es wird kein
+    lokales Go-/Buf-Tool und kein `.git` im Docker-Build-Kontext
+    benötigt. Der Check läuft mit zwei expliziten, dokumentierten
+    Allowlist-Einträgen:
+    - **Oneof-Felder additiv** (`ONEOF_NO_DELETE`-konform; neue
+      Tags 4, 5 in `EncryptResponse` und gespiegelt in
+      `DecryptRequest`).
+    - **Enum-Value-Rename** (`ENUM_VALUE_NO_DELETE`-Ausnahme für
+      `KeyInfo.KeyStatus.REVOKED=3 → DESTROYED=3`); der Tag-Wert
+      bleibt stabil, nur der Name ändert sich. Die Allowlist-
+      Begründung wird im Commit dokumentiert und mit dem
+      Slice-001-Konsumenten-Nullstand belegt.
 - **HKDF-Profil-A-Non-Export** ([`HSM-FMT-006`](../../../../spec/spezifikation.md)):
   Tests gegen SoftHSM v2 und das zweite OSS-Modul belegen die
   Nicht-Extrahierbarkeit:
@@ -1051,6 +1262,16 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
     Container-Header und alle Frames sind konsistent mit `v1`-
     Material.
   - Die folgende Encrypt-Anfrage benutzt `v2`.
+- **Single-Tenant-Konsistenz:** Tests belegen, dass in Slice 002b
+  nur der kanonische Tenant `default` akzeptiert wird:
+  - fehlendes oder leeres `EncryptHeader.tenant_id` wird zu `default`
+    normalisiert;
+  - `tenant_id=default` wird akzeptiert;
+  - jeder andere Wert wird vor Key-Lookup mit `INVALID_ARGUMENT` und
+    Detailcode `TENANT_UNSUPPORTED_IN_M1` abgelehnt;
+  - Container-Header (`tenant_id_hash`), Pro-Chunk-AAD, Audit,
+    strukturierte Logs und Tenant-Metriken verwenden für akzeptierte
+    Streams denselben kanonischen Wert `default`.
 - **Key-Lifecycle** ([`HSM-FA-KEY-001`](../../../../spec/lastenheft.md),
   [`HSM-FA-KEY-002`](../../../../spec/lastenheft.md),
   [`HSM-FA-KEY-004`](../../../../spec/lastenheft.md)):
@@ -1085,13 +1306,6 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
   nur durch Umschalten von `HSMDOC_PKCS11_MODULE` und
   `HSMDOC_PKCS11_TOKEN_LABEL`. Beide Läufe sind grüner Release-
   Block.
-- **Shared-Library-Closure** (Build-Pipeline):
-  Zweistufige Verifikation grün — (a) `lddtree --root
-  $RUNTIME_FS` aus der `closure-check`-Stage meldet keine
-  „not found"-Einträge, (b) `pkcs11-dlopen-smoke`-Binary im
-  Runtime-Image öffnet `$HSMDOC_PKCS11_MODULE` mit Exit 0.
-  Stückliste `/etc/hsmdoc/pkcs11-libs.txt` ist im Image vorhanden
-  und identisch zur `closure-check`-Stage-Ausgabe.
 - **HKDF-Profil-A-Pflicht** ([`HSM-FMT-006`](../../../../spec/spezifikation.md) §1):
   Beide CI-Module (SoftHSM v2 und das zweite OSS-Modul) müssen
   `CKM_HKDF_DERIVE` unterstützen — Start gegen ein Modul ohne
@@ -1101,55 +1315,61 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
   → Header-HMAC neu berechnen aus identischen Inputs → byteweiser
   Vergleich) ist grün.
 - **`CK_HKDF_PARAMS`-Shim verifiziert** (Spike-Output, siehe
-  Vorbedingung 5): Der eingesetzte Pfad — Shim, Fork oder Fallback —
-  ist in ADR 0004 dokumentiert. Ein dedizierter Adapter-Unit-Test
+  Vorbedingung 3): Der eingesetzte Pfad — Shim, Fork oder Fallback —
+  ist in einer neuen Folge-ADR zu ADR 0004 (geplant: ADR 0005)
+  dokumentiert und der ADR-Index ist aktualisiert. Ein dedizierter
+  Adapter-Unit-Test
   ruft `C_DeriveKey` mit `CKM_HKDF_DERIVE` und prüft, dass der
   zurückgegebene Handle `CKA_SIGN=true`, `CKA_TOKEN=false`,
   `CKA_EXTRACTABLE=false` / `CKA_SENSITIVE=true` trägt, gegen
   `C_WrapKey` mit `CKR_KEY_UNEXTRACTABLE` antwortet und per
   `C_DestroyObject` zerstörbar ist.
-- **HSM-FA-HSM-001 — Vendor-Portabilität (Pflicht in Slice 002):**
+- **HSM-FA-HSM-001 — Vendor-Portabilität (Pflicht in Slice 002b):**
   Modulpfad und Slot/Token-Label sind konfigurierbar; der Adapter-
   Codepfad enthält keine Vendor-Strings — Mechanismus-Wahl läuft
   strikt über `C_GetMechanismList`. Code-Review-Akzeptanz:
   `grep -iE "softhsm|opencryptoki|utimaco|thales"` im Adapter-Code
   findet keine Vendor-Verzweigung. **Zweiter herstellerfremder
   PKCS#11-Modul-Smoke** läuft im CI ohne Codeänderung gegen
-  SoftHSM v2 **und** ein zweites herstellerfremdes Modul. Default:
-  OpenCryptoki (ICA-/Software-Token-Modus), Voraussetzung
-  `CKM_AES_GCM` + `CKM_HKDF_DERIVE`. Falls OpenCryptoki diese
-  Mechanismen nicht stabil bedient, wird ein anderes
-  herstellerfremdes OSS-Modul gewählt (z. B. das Mozilla-NSS-
-  Softoken via `libsoftokn3` mit PKCS#11-Wrapper, oder
-  utimaco-SimulatorSE im Trial-Build) — die endgültige Wahl
-  inklusive Mechanismus-Validierung wird in ADR 0004 dokumentiert.
-  Ein zweites SoftHSM-Image mit divergenter Token-Konfiguration
-  ist **kein** Ersatz-Nachweis und zählt höchstens als zusätzlicher
-  Smoke. Damit ist [`HSM-FA-HSM-001`](../../../../spec/lastenheft.md)
+  SoftHSM v2 **und** das in ADR 0004 (aus 002a) festgelegte
+  zweite Modul. Ein zweites SoftHSM-Image mit divergenter
+  Token-Konfiguration ist **kein** Ersatz-Nachweis und zählt
+  höchstens als zusätzlicher Smoke. Damit ist
+  [`HSM-FA-HSM-001`](../../../../spec/lastenheft.md)
   Akzeptanz („Start gegen SoftHSM v2 und ein zweites
-  herstellerfremdes Modul ohne Codeänderung") mit Slice 002
+  herstellerfremdes Modul ohne Codeänderung") mit Slice 002b
   erfüllt.
+- **CGO/Pure-Go-Gates:** `make test` läuft mit `CGO_ENABLED=0`
+  erfolgreich und kompiliert das PKCS#11-Paket nur über den `!cgo`-
+  Stub; ein Test belegt, dass der Stub bei Initialisierung
+  `STARTUP_PKCS11_CGO_DISABLED` liefert. `make integration` läuft mit
+  `CGO_ENABLED=1` und belegt, dass der reale PKCS#11-Adapter gebaut
+  und verwendet wird. Das Runtime-Image wird ausschließlich aus dem
+  `CGO_ENABLED=1`-Build-Stage erzeugt.
 - **`MaxRecvMsgSize`-TODO** in `cmd/hsmdoc/main.go` ist entfernt;
   Item §2.1 aus
   [`offene-arbeitsfaeden.md`](../in-progress/offene-arbeitsfaeden.md)
   ist gestrichen.
+- **`pkcs11-dlopen-smoke`-Startup-Hook** ist verdrahtet: Service-
+  Start ruft das Binary synchron vor `C_Initialize` auf;
+  Exit-Code ≠ 0 → Service bricht mit `STARTUP_PKCS11_DLOPEN_FAILED`
+  ab. Test mit absichtlich kaputtem `HSMDOC_PKCS11_MODULE`-Pfad
+  belegt das Verhalten.
 - **Cross-Adapter-Lint-Regel** (offene-arbeitsfaeden §1.1) ist
   entweder umgesetzt oder mit Begründung weiter aufgeschoben — beides
   ist OK, aber dokumentiert.
 - **Roadmap-Lifecycle** wird in zwei Schritten aktualisiert:
   - **Bei Slice-Aktivierung** (Migration `next/` → `in-progress/`):
     Slice-Tabelle in [`roadmap.md`](../in-progress/roadmap.md)
-    führt 002 als `in-progress`; Open-Trigger-Block streicht 002
-    (gleicher Lifecycle wie 001 beim Aktivieren).
+    führt 002b als `in-progress`.
   - **Bei Slice-Abschluss** (Merge des Schluss-PR, alle Akzeptanz-
-    kriterien grün): Slice-Tabelle führt 002 als `done`,
+    kriterien grün): Slice-Tabelle führt 002b als `done`,
     Slice-Datei wandert nach `done/`; M1-DoD-Tabelle hakt nur die von
-    002 vollständig erfüllten DoD-Items ab — sicher `M1-DoD-07`
-    (Open-Trigger 002 nach `done/`). `M1-DoD-01`
+    002b vollständig erfüllten DoD-Items ab. `M1-DoD-01`
     (`HSM-ACCEPT-001`, funktionale Abnahme gegen SoftHSM) und
     `M1-DoD-03` (1-GiB-Demo Encrypt-Decrypt mit identischer SHA-256)
     bleiben offen, weil beide Encrypt **und** Decrypt verlangen. Slice
-    002 liefert dafür nur die Encrypt-Hälfte; hakbar werden sie erst
+    002b liefert dafür nur die Encrypt-Hälfte; hakbar werden sie erst
     mit Slice 003.
 
 ## Abgrenzung — NICHT in diesem Slice
@@ -1157,7 +1377,7 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
 - **Kein Decrypt-Pfad.** Container-Decoder + Tag-Verifikation kommen
   in Slice 003.
 - **Keine Audit-Hash-Chain, keine Signatur, keine externe Verankerung,
-  kein Verify-Tool in 002.** Slice 002 schreibt einen durablen
+  kein Verify-Tool in 002b.** Slice 002b schreibt einen durablen
   JSONL-Sink (Pflichtfelder + Klartext-Verbot + Sync-Garantie), aber
   **keinen** Manipulationsschutz nach
   [`HSM-FA-AUDIT-002`](../../../../spec/lastenheft.md). Die Basis-
@@ -1174,28 +1394,29 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
   [`HSM-FA-KEY-006`](../../../../spec/spezifikation.md) (Hard/Soft-
   Usage-Limits + Auto-Rotation) sind laut
   [`roadmap.md`](../in-progress/roadmap.md) §M1 ausdrücklich aus M1
-  ausgeschlossen und M2-Scope (Slice 011). Slice 002 nimmt eine
+  ausgeschlossen und M2-Scope (Slice 011). Slice 002b nimmt eine
   einzelne `active` Key-ID an und führt keinen Operationszähler.
 - **Kein Tenant-Mapping über `default` hinaus.** `tenant_id=default`
   wie in Slice 001; Multi-Tenant kommt in M4-Slices.
-- **Keine Caller-Identität.** Audit-Feld `caller` trägt den
-  Platzhalter `unauthenticated`. Volle Erfüllung von
-  [`HSM-API-GRPC-008`](../../../../spec/spezifikation.md)
-  (Caller-Ableitung aus Identitätsquelle) ist Slice-006-Scope.
-- **Nur HKDF-Profil A in M1.** Slice 002 implementiert ausschließlich
+- **Keine vollständige Identity-Source-Matrix.** 002b liefert nur den
+  M1-Pflichtpfad `mtls-subject` für echte Audit-`caller`. Header-
+  Quelle, Peer-Allowlist, Mesh-Termination und die vollständige
+  [`HSM-API-GRPC-006..008`](../../../../spec/spezifikation.md)-
+  Konfigurationsmatrix bleiben Slice 006.
+- **Nur HKDF-Profil A in M1.** Slice 002b implementiert ausschließlich
   Profil A (natives `CKM_HKDF_DERIVE`). Profile B
   (HMAC-Konstruktion mit non-export PRK) und C (Vendor-KDF) werden
   je Produktionsprofil in M3 freigegeben
   ([`HSM-FMT-006`](../../../../spec/spezifikation.md) §1,
   [`HSM-TECH-006`](../../../../spec/lastenheft.md)). HSMs ohne
   natives HKDF sind für M1 nicht freigegeben.
-- **Kein produktives HSM in 002.** Slice 002 schließt
+- **Kein produktives HSM in 002b.** Slice 002b schließt
   [`HSM-FA-HSM-001`](../../../../spec/lastenheft.md) mit
   SoftHSM v2 + einem zweiten OSS-Modul ab; das Profil-Smoke gegen
   ein produktives HSM (Utimaco/Thales) bleibt M3-Scope
   ([`HSM-TECH-006`](../../../../spec/lastenheft.md)).
 - **Keine Vault-/K8s-CSI-Secret-Backends als eigener Adapter.**
-  Slice 002 erwartet die PIN als Datei mit Mode aus der Whitelist
+  Slice 002b erwartet die PIN als Datei mit Mode aus der Whitelist
   `{0400, 0440}` (siehe PKCS#11-Adapter §PIN) — das deckt
   Kubernetes-Secret-Volumes (`defaultMode: 0440` + `fsGroup`) und
   Vault-Agent-Renders (`0400`) bereits ab. Ein nativer Vault- oder
@@ -1203,42 +1424,54 @@ der Sammlung abgeleitet werden, ist aber kein 002-Scope.
   (Open-Trigger noch nicht angelegt).
 - **Kein TLS-Material-Reload.** Bleibt `TODO(slice-006)` und ist
   Scope von Slice 006.
+- **Kein Build-Pipeline-Switch.** CGO-Umstellung, Distroless-base-
+  Wechsel, `lddtree`-Closure, `pkcs11-dlopen-smoke`-Binary und
+  ADR 0004 sind alle Scope von Slice 002a; 002b setzt darauf auf
+  und verdrahtet nur den Startup-Hook.
 
 ## Geplante Slice-Folge danach
 
-| Nr.   | Slice                                       | Aktiviert durch 002                                  |
-| ----- | ------------------------------------------- | ---------------------------------------------------- |
+| Nr.   | Slice                                       | Aktiviert durch 002b                                  |
+| ----- | ------------------------------------------- | ----------------------------------------------------- |
 | `003` | Container-Codec (Decoder) + Decrypt         | Container-Encoder + Pro-Chunk-AAD stehen             |
 | `004` | Audit-Hash-Chain + Verify-Tool              | JSONL-Sink + Port stehen; 004 ergänzt Hash-Chain ohne Port-Bruch |
 | `005` | Helm-Chart + Kind-Smoke (inkl. NetworkPolicy) | PKCS#11-Volume + PIN-Secret-Schema definiert; trägt K8s-Secret-Mount-Smoke (`defaultMode: 0440` + `fsGroup`) als eigene Akzeptanz |
 
 ## Bezug
 
-- Direkter Implementierungs-/Akzeptanzbezug im Slice 002:
+- Direkter Implementierungs-/Akzeptanzbezug im Slice 002b:
   [Lastenheft `HSM-FA-ENC-001..003`, `HSM-FA-HSM-001..003`,
   `HSM-FA-CHUNK-001..003`, `HSM-FA-STREAM-001..002`,
   `HSM-FA-KEY-001..002`, `HSM-FA-KEY-004`, `HSM-FA-QUEUE-001`,
-  `HSM-FA-RETRY-001..002`, `HSM-FA-AUDIT-001`,
-  `HSM-FA-AUDIT-003`, `HSM-FA-AUDIT-005`, `HSM-ARCH-001`,
+  `HSM-FA-RETRY-001..002`, `HSM-FA-AUDIT-003`,
+  `HSM-FA-AUDIT-005`, `HSM-ARCH-001`,
   `HSM-OPS-CFG-001..002`, `HSM-NFA-MEM-001`,
-  `HSM-NFA-OPS-001..003`, `HSM-NFA-SEC-007`](../../../../spec/lastenheft.md)
-- Direkter Implementierungs-/Akzeptanzbezug im Slice 002:
+  `HSM-NFA-OPS-001..003`](../../../../spec/lastenheft.md)
+- Direkter Implementierungs-/Akzeptanzbezug im Slice 002b:
   [Spezifikation `HSM-FA-ENC-004..006`, `HSM-FA-CHUNK-004..008`,
   `HSM-FA-STREAM-003..004`, `HSM-FA-HSM-004..005`,
-  `HSM-API-P11-002..003`, `HSM-FMT-001..006`, `HSM-DATA-001`,
+  `HSM-API-P11-002..003`, `HSM-FMT-001..006`,
   `HSM-DATA-003..004`, `HSM-FA-QUEUE-002..003`,
   `HSM-FA-RETRY-003..004`, `HSM-FA-FAIL-003..004`,
   `HSM-FA-FAIL-008`, `HSM-FA-AUDIT-010`, `HSM-ARCH-003`](../../../../spec/spezifikation.md)
-- Nur als Abgrenzung/Folge-Scope erwähnt, **nicht** durch Slice 002
+- Struktur-/Identitätsbezug im Slice 002b:
+  [Lastenheft `HSM-FA-AUDIT-001`](../../../../spec/lastenheft.md)
+  und [Spezifikation `HSM-DATA-001`,
+  `HSM-API-GRPC-008`](../../../../spec/spezifikation.md). Alle Audit-
+  Pflichtfelder sind für den Encrypt-Pfad vorhanden; `caller` stammt in
+  002b aus dem verifizierten mTLS-Peer-Zertifikat. Slice 006 erweitert
+  diesen Minimalpfad um Header-Quelle, Peer-Allowlist und die volle
+  `identity.*`-Konfigurationsmatrix.
+- Nur als Abgrenzung/Folge-Scope erwähnt, **nicht** durch Slice 002b
   erfüllt:
   [Lastenheft `HSM-FA-AUDIT-002`, `HSM-FA-KEY-003`,
   `HSM-FA-KEY-005`, `HSM-FA-FAIL-001`,
   `HSM-TECH-006`](../../../../spec/lastenheft.md)
   sowie [Spezifikation `HSM-FA-DEC-003`, `HSM-FA-FAIL-005..007`,
   `HSM-FA-AUDIT-006..008`, `HSM-FA-KEY-006`,
-  `HSM-API-GRPC-008`](../../../../spec/spezifikation.md)
+  `HSM-API-GRPC-006..007`](../../../../spec/spezifikation.md)
 - [Architektur Kapitel 2 (Komponenten), 3 (Hexagonale Schichtung), 5.1 (Encrypt-Stream-Sequenz)](../../../../spec/architecture.md)
-- [Open-Trigger 002 — CGO-Base-Switch](../open/002-distroless-base-fuer-cgo.md)
+- [Vorgänger-Slice 002a — CGO-Build-Pipeline](002a-cgo-build-pipeline.md)
 - [ADR 0001 §2.3 — Accepted-ADRs sind immutable](../../adr/0001-documentation-and-planning-structure.md)
 - [ADR 0002 — Docker-only Build-Pipeline](../../adr/0002-docker-only-build-pipeline.md)
 - [`internal/README.md` — Hexagon-Ziel-Layout](../../../../internal/README.md)

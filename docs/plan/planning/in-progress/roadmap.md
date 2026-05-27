@@ -71,7 +71,7 @@ der den DoD-Punkt erfüllt.
 | `[ ]` | `M1-DoD-04` | Java-Beispielprogramm läuft gegen Demo-Service               | `examples/`-Modul + Live-Lauf     | `HSM-MVP-006`, `HSM-API-JAVA-001`                  |
 | `[x]` | `M1-DoD-05` | `make ci` grün mit `internal/`-Coverage ≥ 80 % (kein Bootstrap) | CI-Job-Status                     | ADR 0002 §2.5                                      |
 | `[x]` | `M1-DoD-06` | Open-Trigger 001 (`go.sum` Strict-Mode) nach `done/` migriert | Repo-State                        | [`done/001`](../done/001-gosum-strict-mode.md)     |
-| `[ ]` | `M1-DoD-07` | Open-Trigger 002 (CGO-Base-Switch) nach `done/` migriert      | Repo-State                        | [`open/002`](../open/002-distroless-base-fuer-cgo.md) |
+| `[ ]` | `M1-DoD-07` | Open-Trigger 002 (CGO-Base-Switch) nach `done/` migriert      | Repo-State                        | [`open/002`](../open/002-distroless-base-fuer-cgo.md), eingelöst durch [Slice 002a](../next/002a-cgo-build-pipeline.md) |
 
 **Verifikationspfad:** Integrationstests in CI gegen SoftHSM, Helm-
 Smoke-Test gegen Kind, Maven-Build-Analyse für Java-Client.
@@ -204,8 +204,10 @@ Service nicht für andere blockieren.
 Liste lebt in [`docs/plan/planning/open/`](../open/). Aktueller Bestand:
 
 - [`002-distroless-base-fuer-cgo`](../open/002-distroless-base-fuer-cgo.md)
-  — wird durch den ersten Slice aktiviert, der `github.com/miekg/pkcs11`
-  importiert (geplant: M1-Slice 002).
+  — wird durch den ersten Slice aktiviert, der die CGO-fähige
+  Runtime-Base braucht (geplant: M1-Slice 002a;
+  Slice 002b setzt darauf auf und zieht
+  `github.com/miekg/pkcs11` ein).
 
 Erledigte Trigger:
 
@@ -229,7 +231,7 @@ laufen über die Routing-Liste
 [`offene-arbeitsfaeden.md`](offene-arbeitsfaeden.md). Aktueller Inhalt:
 zwei aufgeschobene Review-Items aus Slice 001 (cross-adapter rule,
 Threshold-Two-Sources), zwei TODO-Code-Marker (MaxRecvMsgSize für
-Slice 002, TLS-Reload für Slice 006), die noch nicht skizzierten
+Slice 002b, TLS-Reload für Slice 006), die noch nicht skizzierten
 M2-Slices 007+, ein anstehender SPIFFE/SPIRE-Open-Trigger und der
 Helm-Chart-NetworkPolicy-Sub-Scope für Slice 005. Jeder Eintrag dort
 trägt sein dauerhaftes Zuhause als Routing-Vermerk; sobald geroutet,
@@ -256,8 +258,9 @@ parallel arbeiten.
 | Slice | Titel                                              | Ort           | Status             | Letzter Touchpoint           |
 | ----- | -------------------------------------------------- | ------------- | ------------------ | ---------------------------- |
 | 001   | [gRPC-Skeleton](001-grpc-skeleton.md)              | `in-progress` | gates grün, DoD-05 erfüllt; Slice schließt mit M1-DoD-Erfüllung | Commit `dcc1758` (2026-05-27) |
-| 002   | [PKCS#11-Adapter + Encrypt](../next/002-pkcs11-encrypt.md) | `next`        | Scope skizziert; wartet auf Slice-001-Closure und CI-SoftHSM-Setup; löst Open-Trigger 002 ein | Plan-Commit (2026-05-27)     |
-| 003   | Container-Codec + Decrypt                          | _ungeschnitten_ | geplant                                          | —                            |
+| 002a  | [CGO-Build-Pipeline](../next/002a-cgo-build-pipeline.md) | `next`        | Build-Pipeline-Slice (Distroless-base, CGO, lddtree-Closure, `pkcs11-dlopen-smoke`, ADR 0004, ADR-0001-Hygiene); wartet auf Slice-001-Closure; löst Open-Trigger 002 ein | Plan-Commit (2026-05-27)     |
+| 002b  | [PKCS#11-Adapter + Encrypt-Hexagon](../next/002b-pkcs11-encrypt-hexagon.md) | `next`        | Encrypt-Slice (Hexagon-Schicht, PKCS#11-Adapter, Audit-Sink, Key-Registry); wartet auf Slice-002a-Closure und HKDF-Spike; trägt den fachlichen M1-Encrypt-Pfad | Plan-Commit (2026-05-27)     |
+| 003   | Container-Codec + Decrypt                          | _ungeschnitten_ | geplant; hängt an 002b (Container-Encoder + Pro-Chunk-AAD)         | —                            |
 | 004   | Basis-Audit-Log mit Hash-Chain                     | _ungeschnitten_ | geplant                                          | —                            |
 | 005   | Helm-Chart + Kind-Smoke                            | _ungeschnitten_ | geplant; trägt Sub-Scope NetworkPolicy-Defaults aus [`offene-arbeitsfaeden.md`](offene-arbeitsfaeden.md) §5 | — |
 | 006   | [Identity-Source und Peer-Allowlist](../next/006-identity-source-und-peer-allowlist.md) | `next` | wartet auf Slices 001+004; setzt `HSM-API-GRPC-006..008` um | Commit `9de091d` (2026-05-27) |

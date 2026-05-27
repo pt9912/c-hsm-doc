@@ -1,11 +1,13 @@
 # 003 — Cloud-KMS-Adapter (Envelope-Pattern) als zweiter Driven-Pfad
 
-**Trigger:** Architektur-Diskussion bei Slice 002 Review (2026-05-27).
+**Trigger:** Architektur-Diskussion bei Slice 002 Review (2026-05-27;
+Slice 002 wurde nach dem Review in 002a + 002b gesplittet — die hier
+beschriebene hexagonale Architektur entsteht in 002b).
 
 ## Beobachtung
 
-Die hexagonale Architektur aus Slice 002
-([`next/002-pkcs11-encrypt.md`](../next/002-pkcs11-encrypt.md))
+Die hexagonale Architektur aus Slice 002b
+([`next/002b-pkcs11-encrypt-hexagon.md`](../next/002b-pkcs11-encrypt-hexagon.md))
 schneidet `ChunkSealer` und `HeaderMAC` als Driven-Ports.
 `internal/adapter/driven/pkcs11/` implementiert beide gegen
 PKCS#11 mit **Pro-Chunk-AEAD** ([`HSM-FA-ENC-006`](../../../../spec/spezifikation.md)):
@@ -117,13 +119,13 @@ Sub-Adapter werden.
   HSM-Profil-Smoke ([`HSM-TECH-006`](../../../../spec/lastenheft.md),
   M3-Scope).
 - **Kein PIN-/Secret-Store-Trigger.** Vault-Agent oder K8s-Secret-CSI
-  als PIN-Quelle ist eine andere Diskussion (siehe Slice 002
+  als PIN-Quelle ist eine andere Diskussion (siehe Slice 002b
   §Abgrenzung „Keine Vault-/K8s-CSI-Secret-Backends als eigener
   Adapter"). Wird separat verfolgt, wenn relevant.
 
 ## Bezug
 
-- [`next/002-pkcs11-encrypt.md`](../next/002-pkcs11-encrypt.md) §ChunkSealer-Port, §HeaderMAC-Port
+- [`next/002b-pkcs11-encrypt-hexagon.md`](../next/002b-pkcs11-encrypt-hexagon.md) §ChunkSealer-Port, §HeaderMAC-Port
 - [`spec/spezifikation.md`](../../../../spec/spezifikation.md) HSM-FA-ENC-006 (Pro-Chunk-AEAD), HSM-FMT-001..006 (Container-Layout)
 - [`spec/lastenheft.md`](../../../../spec/lastenheft.md) HSM-FA-ENC-001..003 (AES-256-GCM, HSM-resident), HSM-TECH-006 (HSM-Profile), HSM-NFA-PERF-001..004 (Performance)
 - [ADR 0001 §2.4 — Open-Trigger-Lebenszyklus](../../adr/0001-documentation-and-planning-structure.md)

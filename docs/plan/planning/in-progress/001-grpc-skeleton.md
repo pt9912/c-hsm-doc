@@ -78,13 +78,14 @@ Dieser Slice ist der erste echte M1-Schritt nach dem Bootstrap-Stand.
 
 ## Geplante Slice-Folge in M1
 
-| Nr.   | Slice                                | Aktiviert                                        |
-| ----- | ------------------------------------ | ------------------------------------------------ |
-| `001` | gRPC-Skeleton (dieser Slice)         | Open-Trigger 001 (`go.sum`)                      |
-| `002` | PKCS#11-Adapter + Encrypt            | Open-Trigger 002 (CGO-Base)                      |
-| `003` | Container-Codec + Decrypt            | `HSM-FMT-001..006`, `HSM-FA-CHUNK-004..007`      |
-| `004` | Basis-Audit-Log mit Hash-Chain       | `HSM-FA-AUDIT-001..005`                          |
-| `005` | Helm-Chart + Kind-Smoke              | `HSM-MVP-005`, `HSM-ACCEPT-005`                  |
+| Nr.    | Slice                                | Aktiviert                                        |
+| ------ | ------------------------------------ | ------------------------------------------------ |
+| `001`  | gRPC-Skeleton (dieser Slice)         | Open-Trigger 001 (`go.sum`)                      |
+| `002a` | CGO-Build-Pipeline                   | Open-Trigger 002 (CGO-Base); ADR 0004; ADR-0001-Hygiene |
+| `002b` | PKCS#11-Adapter + Encrypt-Hexagon    | Slice 002a + HKDF-Spike (gegen SoftHSM + zweites OSS-Modul) |
+| `003`  | Container-Codec + Decrypt            | `HSM-FMT-001..006`, `HSM-FA-CHUNK-004..007`      |
+| `004`  | Basis-Audit-Log mit Hash-Chain       | `HSM-FA-AUDIT-001..005`                          |
+| `005`  | Helm-Chart + Kind-Smoke              | `HSM-MVP-005`, `HSM-ACCEPT-005`                  |
 
 ## Bezug
 
