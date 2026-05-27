@@ -510,7 +510,14 @@ Der gRPC-Endpoint MUSS TLS 1.3 verlangen. TLS 1.2 KANN als Übergangsoption per 
 
 Mutual TLS MUSS unterstützt und über Konfiguration einschaltbar sein.
 
-Akzeptanz: Mit aktiviertem mTLS schlagen Clients ohne gültiges Zertifikat mit `UNAUTHENTICATED` fehl; der Subject-Name aus dem Client-Zertifikat erscheint im Audit-Log als `caller`.
+Die Quelle der Caller-Identität (Audit-Feld `caller`, Ableitung von `tenant_id`) MUSS konfigurierbar sein:
+
+- `mtls-subject` (Default; gültig in den Modi 1–3 aus `HSM-ENV-004`): Subject-Name bzw. SAN aus dem am Server terminierten Client-Zertifikat.
+- `header` (gültig in Modus 4 aus `HSM-ENV-004` bei mesh-terminiertem mTLS): konfigurierbarer Header (z. B. `x-forwarded-client-cert`, SPIFFE-ID-Header, JWT-Claim).
+
+Bei Identitätsquelle `header` MUSS der Server die unmittelbare Peer-Adresse und/oder das Peer-Zertifikat gegen eine explizit konfigurierte Allowlist vertrauenswürdiger Peers (z. B. Mesh-Sidecar-SAN, Loopback aus demselben Pod) prüfen. Liegt diese Allowlist nicht vor oder ist sie leer, MUSS der Start gemäß `HSM-OPS-CFG-002` mit eindeutigem Fehler abbrechen.
+
+Akzeptanz: Mit aktiviertem mTLS und Identitätsquelle `mtls-subject` schlagen Clients ohne gültiges Zertifikat mit `UNAUTHENTICATED` fehl; der Subject-Name aus dem Client-Zertifikat erscheint im Audit-Log als `caller`. Mit Identitätsquelle `header` und nicht-vertrauenswürdigem Peer wird die Anfrage mit `UNAUTHENTICATED` abgewiesen; mit vertrauenswürdigem Peer erscheint die im Header transportierte Identität als `caller`.
 
 ### HSM-API-P11-001 – PKCS#11 v2.40
 
@@ -756,6 +763,19 @@ Das Deployment MUSS Kubernetes-kompatibel sein; ein Helm-Chart MUSS im Repositor
 
 Für lokale Entwicklung MUSS SoftHSM v2 unterstützt werden; ein `docker-compose.dev.yml` MUSS Service und SoftHSM startfähig kombinieren.
 
+### HSM-ENV-004 – Plattform-Neutralität
+
+Der Service MUSS in vier Betriebsmodi lauffähig sein und seine funktionalen sowie sicherheitsrelevanten Eigenschaften (mTLS, Audit-`caller`, `tenant_id`, Health-/Ready-Probes, Prometheus-Metriken, OTel-Export) in allen vier Modi gleichwertig erfüllen:
+
+1. **Bare-Container** (Docker/Podman/containerd) ohne Orchestrator,
+2. **Kubernetes ohne Service Mesh**,
+3. **Kubernetes mit L4-Passthrough-Mesh** (z. B. Istio Ambient ztunnel-only, Linkerd ohne mTLS-Termination),
+4. **Kubernetes mit L7-/mTLS-terminierendem Mesh** (z. B. Istio mit `PeerAuthentication STRICT`, Linkerd-Proxy mit Mesh-mTLS).
+
+Helm-Chart, NetworkPolicies und Mesh-Konfiguration sind Auslieferungsartefakte, nicht Laufzeitvoraussetzungen. Der Service DARF KEINE Funktionalität, Sicherheitsgarantie oder Identitätsableitung ausschließlich vom Vorhandensein eines Orchestrators oder Service Mesh abhängig machen.
+
+In Modi 1–3 sieht der Server das originale Client-Zertifikat; die Identitätsableitung folgt `HSM-API-GRPC-003`. In Modus 4 terminiert das Mesh den TLS-Handshake; die Identitätsableitung folgt der Header-Variante aus `HSM-API-GRPC-003` und ist nur mit konfigurierter Peer-Vertrauensprüfung zulässig.
+
 ### HSM-OPS-MON-001 – Prometheus
 
 Der Dienst MUSS Prometheus-kompatible Metriken bereitstellen.
@@ -936,7 +956,7 @@ Das Benchmark-Skript erreicht die Werte aus HSM-NFA-PERF-001 und HSM-NFA-PERF-00
 
 ### HSM-ACCEPT-003 – Security-Abnahme
 
-mTLS-Test schlägt für Clients ohne Zertifikat mit `UNAUTHENTICATED` fehl; PIN-Scan über Image und Logs ist negativ; SBOM und Image-Signatur liegen vor.
+mTLS-Reject-Test (`HSM-API-GRPC-003`) wird in **Modus 1** (Bare-Container) und **Modus 2** (Kubernetes ohne Mesh) aus `HSM-ENV-004` ausgeführt und schlägt für Clients ohne gültiges Zertifikat in beiden Modi mit `UNAUTHENTICATED` fehl. Für **Modus 4** (mesh-terminiertes mTLS) wird ein zweiter Test mit Identitätsquelle `header` ausgeführt: Anfragen von nicht in der Peer-Allowlist eingetragenen Quellen werden mit `UNAUTHENTICATED` abgewiesen; bei vertrauenswürdigem Peer erscheint die Header-Identität als `caller` im Audit-Log. PIN-Scan über Image und Logs ist negativ; SBOM und Image-Signatur liegen vor.
 
 ### HSM-ACCEPT-004 – Audit-Abnahme
 

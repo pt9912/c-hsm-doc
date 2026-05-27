@@ -117,7 +117,7 @@ für Behörden- und regulierte Umgebungen typisch sind.
 | `[ ]` | `M2-DoD-03` | Manipulation eines Audit-Eintrags wird vom Verify-Tool erkannt         | Failure-Injection-Test            | `HSM-FA-AUDIT-002`                 |
 | `[ ]` | `M2-DoD-04` | Vollständiger Audit-Datei-Neuschreib wird über externe Verankerung erkannt | Verify-Tool gegen TSA/Rekor       | `HSM-FA-AUDIT-007`                 |
 | `[ ]` | `M2-DoD-05` | Token-Removal-Test: Service wieder ready ohne Pod-Restart              | Failure-Injection in Kind         | `HSM-FA-FAIL-001`, `HSM-FA-FAIL-006` |
-| `[ ]` | `M2-DoD-06` | mTLS-Reject-Test: Client ohne Zertifikat → `UNAUTHENTICATED`           | Integrationstest                  | `HSM-API-GRPC-003`                 |
+| `[ ]` | `M2-DoD-06` | mTLS-Reject-Test zweigleisig: (a) Identitätsquelle `mtls-subject` in Modus 1+2 — Client ohne Zertifikat → `UNAUTHENTICATED`; (b) Identitätsquelle `header` in Modus 4 — Anfrage von Peer außerhalb Allowlist → `UNAUTHENTICATED`, von vertrauenswürdigem Peer → Header-Identität als `caller` im Audit | Integrationstest (Modus 1+2) + Mesh-Integrationstest (Modus 4) | `HSM-API-GRPC-003`, `HSM-ENV-004`  |
 | `[ ]` | `M2-DoD-07` | SBOM (CycloneDX oder SPDX) liegt je Release vor                        | Release-Artefakt im Repo          | `HSM-NFA-SEC-005`                  |
 | `[ ]` | `M2-DoD-08` | Container-Images signiert (cosign)                                     | Signaturprüfung im Deployment     | `HSM-NFA-SEC-006`                  |
 | `[ ]` | `M2-DoD-09` | Schlüsselrotation während aktivem Stream bricht Stream nicht ab        | Rotation-Test gegen laufenden Stream | `HSM-FA-KEY-003`                |
