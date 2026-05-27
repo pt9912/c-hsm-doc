@@ -15,18 +15,24 @@ Dokumente zu und von ihm.
 
 ## Status
 
-**Bootstrap — noch kein Produktiv-Code.** Spezifikation, Architektur
-und Planung stehen; die Build-Pipeline läuft gegen einen Platzhalter-
-`main.go`. Die Umsetzung startet mit Meilenstein M1
+**M1 aktiv.** Slice 001 (gRPC-Skeleton, TLS 1.3, Health-/Ready-
+Endpoints, 12-Factor-Config) ist geliefert. Slice 002a (CGO-fähige
+Build-Pipeline mit `distroless/base`, transitive `lddtree`-
+Library-Closure, `pkcs11-dlopen-smoke`-Helfer, OpenCryptoki als
+zweites herstellerfremdes PKCS#11-Modul) ist aktiv und `make ci`
+ist grün
 (siehe [`docs/plan/planning/in-progress/roadmap.md`](docs/plan/planning/in-progress/roadmap.md)).
+Slice 002b (PKCS#11-Driven-Adapter, Encrypt-Hexagon, durabler
+Audit-Sink, Key-Registry) wartet in
+[`docs/plan/planning/next/`](docs/plan/planning/next/).
 
-| Phase                       | Status            | Quelle                                                                                  |
-| --------------------------- | ----------------- | --------------------------------------------------------------------------------------- |
-| Lastenheft (vertraglich)    | Entwurf 0.2       | [`spec/lastenheft.md`](spec/lastenheft.md)                                              |
-| Spezifikation (technisch)   | Entwurf 0.2       | [`spec/spezifikation.md`](spec/spezifikation.md)                                        |
-| Architektur                 | Entwurf 0.1       | [`spec/architecture.md`](spec/architecture.md)                                          |
-| Architekturentscheidungen   | 2 ADRs            | [`docs/plan/adr/`](docs/plan/adr/)                                                      |
-| Roadmap                     | M1..M4 definiert  | [`docs/plan/planning/in-progress/roadmap.md`](docs/plan/planning/in-progress/roadmap.md)|
+| Phase                       | Status                                | Quelle                                                                                  |
+| --------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------- |
+| Lastenheft (vertraglich)    | Entwurf 0.2                           | [`spec/lastenheft.md`](spec/lastenheft.md)                                              |
+| Spezifikation (technisch)   | Entwurf 0.2                           | [`spec/spezifikation.md`](spec/spezifikation.md)                                        |
+| Architektur                 | Entwurf 0.1                           | [`spec/architecture.md`](spec/architecture.md)                                          |
+| Architekturentscheidungen   | 5 ADRs (0001–0005)                    | [`docs/plan/adr/`](docs/plan/adr/)                                                      |
+| Roadmap                     | M1 aktiv (001 done, 002a in-progress) | [`docs/plan/planning/in-progress/roadmap.md`](docs/plan/planning/in-progress/roadmap.md)|
 
 ## Quickstart
 
@@ -35,7 +41,7 @@ erforderlich. Nur Docker und `make` müssen installiert sein.
 
 ```bash
 make help            # alle Targets auflisten
-make build           # Runtime-Image bauen (distroless static, nonroot)
+make build           # Runtime-Image bauen (distroless base, nonroot, CGO; ADR 0004)
 make run             # Smoketest: docker run c-hsm-doc-server --version
 ```
 
@@ -43,11 +49,21 @@ Inner-Loop-Quality-Gates:
 
 ```bash
 make lint            # golangci-lint
-make test            # go test ./...
-make coverage-gate   # Coverage-Gate (bootstrap-aware, ADR 0002 §2.5)
+make test            # go test ./... (CGO_ENABLED=0)
+make coverage-gate   # Coverage-Gate (Schwelle 80 %, ADR 0002 §2.5)
 make gates           # lint + test + coverage-gate + docs-check
-make ci              # gates + govulncheck
+make ci              # gates + govulncheck + Image-Pipeline-Gates (ADR 0004)
 make fullbuild       # ci + build (vollständiger Closure-Lauf)
+```
+
+Image-Pipeline-Gates aus Slice 002a (ADR 0004) — auch in `make ci`
+enthalten:
+
+```bash
+make closure-check   # lddtree-Verifikation gegen Runtime-Rootfs neu erzwingen
+make smoke-dlopen    # PKCS#11-Modul im Runtime-Image dlopen()
+make image-scan      # Trivy HIGH/CRITICAL (schreibt out/security/trivy-runtime.json)
+make image-size      # Runtime-Image-Größe protokollieren (out/security/image-size.txt)
 ```
 
 Lokaler SoftHSM-Token für Entwicklung (HSM-ENV-003):
@@ -61,16 +77,17 @@ make dev-down        # Compose-Umgebung herunterfahren (Volume bleibt)
 
 ```text
 .
-├── cmd/hsmdoc/             # Go-Server-Entry-Point (Bootstrap-Platzhalter)
-├── internal/               # hexagonales Layout (siehe spec/architecture.md)
-├── scripts/                # Build-Helfer (coverage-gate.sh)
-├── dev/softhsm/            # Dev-only SoftHSM-Init-Container
-├── spec/                   # Lastenheft, Spezifikation, Architektur
-├── docs/                   # ADRs und Planung (Kanban-Buckets)
-├── Dockerfile              # Multi-Stage Go-Build (ADR 0002)
-├── Makefile                # Docker-only-Workflow
-├── .dockerignore           # Build-Kontext-Filter
-├── docker-compose.dev.yml  # lokale SoftHSM-Dev-Umgebung (HSM-ENV-003)
+├── cmd/hsmdoc/                  # Go-Server-Entry-Point (Slice 001)
+├── cmd/pkcs11-dlopen-smoke/     # PKCS#11-dlopen-Helfer (Slice 002a, ADR 0004 §2.5)
+├── internal/                    # hexagonales Layout (siehe spec/architecture.md)
+├── scripts/                     # Build-Helfer (coverage-gate.sh)
+├── dev/softhsm/                 # Dev-only SoftHSM-Init-Container
+├── spec/                        # Lastenheft, Spezifikation, Architektur
+├── docs/                        # ADRs und Planung (Kanban-Buckets)
+├── Dockerfile                   # Multi-Stage Go-Build (ADR 0002 + 0004)
+├── Makefile                     # Docker-only-Workflow
+├── .dockerignore                # Build-Kontext-Filter
+├── docker-compose.dev.yml       # lokale SoftHSM-Dev-Umgebung (HSM-ENV-003)
 └── go.mod
 ```
 

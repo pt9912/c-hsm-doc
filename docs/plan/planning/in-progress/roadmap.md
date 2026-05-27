@@ -246,7 +246,7 @@ wird er aus der Liste gestrichen.
 
 | Meilenstein | Status                                                                          |
 | ----------- | ------------------------------------------------------------------------------- |
-| M1          | Slice 001 (gRPC-Skeleton) in `done/`; Slice 002a (CGO-Build-Pipeline) aktiv in `in-progress/`; Folge-Slice 002b in `next/`. |
+| M1          | Slice 001 in `done/`; Slice 002a in `in-progress/` (Build-Pipeline implementiert, `make ci` grün, vor Slice-Closure); Slice 002b in `next/`. |
 | M2          | wartet auf M1-Closure; Slice 006 (Identity-Source) in `next/` vorbereitet.       |
 | M3          | wartet auf M2-Closure und Verfügbarkeit Produktions-HSM.                        |
 | M4          | wartet auf M3-Closure.                                                          |
@@ -261,7 +261,7 @@ parallel arbeiten.
 | Slice | Titel                                              | Ort           | Status             | Letzter Touchpoint           |
 | ----- | -------------------------------------------------- | ------------- | ------------------ | ---------------------------- |
 | 001   | [gRPC-Skeleton](../done/001-grpc-skeleton.md)      | `done`        | Akzeptanzkriterien erfüllt, Closure-Notiz im Slice-Dokument; M1-DoD-05/06 abgehakt | Closure-Commit (2026-05-27)  |
-| 002a  | [CGO-Build-Pipeline](002a-cgo-build-pipeline.md) | `in-progress` | Aktiv ab 2026-05-27; Build-Pipeline-Slice (Distroless-base, CGO, lddtree-Closure, `pkcs11-dlopen-smoke`, ADR 0004, ADR-0001-Hygiene); löst Open-Trigger 002 ein | Aktivierung (2026-05-27)     |
+| 002a  | [CGO-Build-Pipeline](002a-cgo-build-pipeline.md) | `in-progress` | Aktiv ab 2026-05-27; ADR 0004 + 0005 angelegt, Dockerfile/Makefile/Smoke-Binary committed, `make ci` grün (Coverage 91.8 %, 0 Trivy HIGH/CRITICAL, Runtime-Image 43,9 MiB); offen: Open-Trigger 002 nach `done/` migrieren und Slice-Closure | Commit `ec77196` (2026-05-27) |
 | 002b  | [PKCS#11-Adapter + Encrypt-Hexagon](../next/002b-pkcs11-encrypt-hexagon.md) | `next`        | Encrypt-Slice (Hexagon-Schicht, PKCS#11-Adapter, Audit-Sink, Key-Registry); wartet auf Slice-002a-Closure und HKDF-Spike; trägt den fachlichen M1-Encrypt-Pfad | Plan-Commit (2026-05-27)     |
 | 003   | Container-Codec + Decrypt                          | _ungeschnitten_ | geplant; hängt an 002b (Container-Encoder + Pro-Chunk-AAD)         | —                            |
 | 004   | Basis-Audit-Log mit Hash-Chain                     | _ungeschnitten_ | geplant                                          | —                            |
