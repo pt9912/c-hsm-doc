@@ -190,16 +190,27 @@ legt die Modulwahl **vor** dem HKDF-Spike (Slice 002b Vorbedingung
 ### 2.7 Image-Größe und Trivy-Scan
 
 `distroless/base-debian12:nonroot` ist deutlich größer als
-`distroless/static-debian12:nonroot` (typisch +20 MB Base + ~5–10 MB
-SoftHSM-Closure). Die genauen Werte werden in der 002a-Implementierung
-gemessen und hier nachgetragen, sobald das Runtime-Image baubar ist;
-bis dahin trägt die Tabelle Platzhalter.
+`distroless/static-debian12:nonroot` (Base + ELF-Loader + glibc +
+SoftHSM-/OpenCryptoki-Closure). Erste Slice-002a-Messung (`make image-size`
+und `make image-scan`, Build-Datum 2026-05-27):
 
-| Messung                       | Slice-001-Stand (distroless/static) | Slice-002a-Stand (distroless/base) |
-| ----------------------------- | ----------------------------------- | ---------------------------------- |
-| Runtime-Image-Größe           | `out/security/image-size.txt`       | `out/security/image-size.txt`      |
-| Trivy HIGH-Findings           | `out/security/trivy-runtime.json`   | `out/security/trivy-runtime.json`  |
-| Trivy CRITICAL-Findings       | `out/security/trivy-runtime.json`   | `out/security/trivy-runtime.json`  |
+| Messung                       | Slice-002a-Stand (distroless/base + Closure)         |
+| ----------------------------- | ---------------------------------------------------- |
+| Runtime-Image-Größe           | 46 001 254 Byte (≈ 43,9 MiB)                         |
+| Trivy HIGH-Findings (Debian)  | 0                                                    |
+| Trivy CRITICAL-Findings (Debian) | 0                                                  |
+| Trivy HIGH/CRITICAL (Go-Binaries) | 0 (Server + `pkcs11-dlopen-smoke`)               |
+
+Vergleich zum Slice-001-Stand (`distroless/static-debian12:nonroot` +
+einzelnes Go-Binary, statisch gelinkt) wird beim ersten Build im
+selben CI-Lauf erhoben und in einer Folge-Notiz nachgetragen;
+ungefähre Größenordnung typisch ~22 MiB Slice-001-Stand → ~43,9 MiB
+Slice-002a-Stand (Differenz dominiert durch glibc-Userland +
+NSS/OpenSSL aus der PKCS#11-Closure).
+
+Akzeptanz für Slice 002a: keine **neuen** HIGH/CRITICAL-Findings
+gegenüber dem Vorzustand — erfüllt (0 Findings nach Stage-Init).
+Eine Verschlechterung ist Release-Blocker.
 
 Akzeptanz für Slice 002a: keine **neuen** HIGH/CRITICAL-Findings
 gegenüber dem Vorzustand. Eine Verschlechterung ist Release-Blocker.
