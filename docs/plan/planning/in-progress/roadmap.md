@@ -71,7 +71,7 @@ der den DoD-Punkt erfüllt.
 | `[ ]` | `M1-DoD-04` | Java-Beispielprogramm läuft gegen Demo-Service               | `examples/`-Modul + Live-Lauf     | `HSM-MVP-006`, `HSM-API-JAVA-001`                  |
 | `[x]` | `M1-DoD-05` | `make ci` grün mit `internal/`-Coverage ≥ 80 % (kein Bootstrap) | CI-Job-Status                     | ADR 0002 §2.5                                      |
 | `[x]` | `M1-DoD-06` | Open-Trigger 001 (`go.sum` Strict-Mode) nach `done/` migriert | Repo-State                        | [`done/001`](../done/001-gosum-strict-mode.md)     |
-| `[ ]` | `M1-DoD-07` | Open-Trigger 002 (CGO-Base-Switch) nach `done/` migriert      | Repo-State                        | [`open/002`](../open/002-distroless-base-fuer-cgo.md), eingelöst durch [Slice 002a](../next/002a-cgo-build-pipeline.md) |
+| `[ ]` | `M1-DoD-07` | Open-Trigger 002 (CGO-Base-Switch) nach `done/` migriert      | Repo-State                        | [`open/002`](../open/002-distroless-base-fuer-cgo.md), eingelöst durch [Slice 002a](002a-cgo-build-pipeline.md) |
 
 **Verifikationspfad:** Integrationstests in CI gegen SoftHSM, Helm-
 Smoke-Test gegen Kind, Maven-Build-Analyse für Java-Client.
@@ -88,9 +88,10 @@ TLS 1.3, Health-/Ready-Endpoints, 12-Factor-Konfiguration; geliefert
 am 2026-05-27). Open-Trigger 001 (`go.sum` Strict-Mode) ist mit
 diesem Slice eingelöst und nach
 [`done/001-gosum-strict-mode.md`](../done/001-gosum-strict-mode.md)
-migriert. Der nächste M1-Schritt ist Slice 002a
-([`next/002a-cgo-build-pipeline.md`](../next/002a-cgo-build-pipeline.md));
-geplante Folge-Slices stehen in der Slice-Tabelle unten.
+migriert. Aktiv läuft jetzt Slice 002a
+([`in-progress/002a-cgo-build-pipeline.md`](002a-cgo-build-pipeline.md);
+aktiv ab 2026-05-27); geplante Folge-Slices stehen in der
+Slice-Tabelle unten.
 
 ---
 
@@ -205,11 +206,11 @@ Service nicht für andere blockieren.
 
 Liste lebt in [`docs/plan/planning/open/`](../open/). Aktueller Bestand:
 
-- [`002-distroless-base-fuer-cgo`](../open/002-distroless-base-fuer-cgo.md)
-  — wird durch den ersten Slice aktiviert, der die CGO-fähige
-  Runtime-Base braucht (geplant: M1-Slice 002a;
-  Slice 002b setzt darauf auf und zieht
-  `github.com/miekg/pkcs11` ein).
+- _(keiner — der einzige bisher offene Trigger
+  [`002-distroless-base-fuer-cgo`](../open/002-distroless-base-fuer-cgo.md)
+  wird gerade durch [Slice 002a](002a-cgo-build-pipeline.md)
+  eingelöst; die Trigger-Datei wandert mit dem Slice-002a-Closure-PR
+  nach `done/`.)_
 
 Erledigte Trigger:
 
@@ -245,7 +246,7 @@ wird er aus der Liste gestrichen.
 
 | Meilenstein | Status                                                                          |
 | ----------- | ------------------------------------------------------------------------------- |
-| M1          | Slice 001 (gRPC-Skeleton) in `in-progress/`, gates grün; Folge-Slices in Planung. |
+| M1          | Slice 001 (gRPC-Skeleton) in `done/`; Slice 002a (CGO-Build-Pipeline) aktiv in `in-progress/`; Folge-Slice 002b in `next/`. |
 | M2          | wartet auf M1-Closure; Slice 006 (Identity-Source) in `next/` vorbereitet.       |
 | M3          | wartet auf M2-Closure und Verfügbarkeit Produktions-HSM.                        |
 | M4          | wartet auf M3-Closure.                                                          |
@@ -260,7 +261,7 @@ parallel arbeiten.
 | Slice | Titel                                              | Ort           | Status             | Letzter Touchpoint           |
 | ----- | -------------------------------------------------- | ------------- | ------------------ | ---------------------------- |
 | 001   | [gRPC-Skeleton](../done/001-grpc-skeleton.md)      | `done`        | Akzeptanzkriterien erfüllt, Closure-Notiz im Slice-Dokument; M1-DoD-05/06 abgehakt | Closure-Commit (2026-05-27)  |
-| 002a  | [CGO-Build-Pipeline](../next/002a-cgo-build-pipeline.md) | `next`        | Build-Pipeline-Slice (Distroless-base, CGO, lddtree-Closure, `pkcs11-dlopen-smoke`, ADR 0004, ADR-0001-Hygiene); wartet auf Slice-001-Closure; löst Open-Trigger 002 ein | Plan-Commit (2026-05-27)     |
+| 002a  | [CGO-Build-Pipeline](002a-cgo-build-pipeline.md) | `in-progress` | Aktiv ab 2026-05-27; Build-Pipeline-Slice (Distroless-base, CGO, lddtree-Closure, `pkcs11-dlopen-smoke`, ADR 0004, ADR-0001-Hygiene); löst Open-Trigger 002 ein | Aktivierung (2026-05-27)     |
 | 002b  | [PKCS#11-Adapter + Encrypt-Hexagon](../next/002b-pkcs11-encrypt-hexagon.md) | `next`        | Encrypt-Slice (Hexagon-Schicht, PKCS#11-Adapter, Audit-Sink, Key-Registry); wartet auf Slice-002a-Closure und HKDF-Spike; trägt den fachlichen M1-Encrypt-Pfad | Plan-Commit (2026-05-27)     |
 | 003   | Container-Codec + Decrypt                          | _ungeschnitten_ | geplant; hängt an 002b (Container-Encoder + Pro-Chunk-AAD)         | —                            |
 | 004   | Basis-Audit-Log mit Hash-Chain                     | _ungeschnitten_ | geplant                                          | —                            |

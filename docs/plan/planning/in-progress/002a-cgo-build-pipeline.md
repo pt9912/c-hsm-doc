@@ -1,7 +1,7 @@
 # 002a — CGO-Build-Pipeline für PKCS#11
 
-**Meilenstein:** M1 (siehe [`roadmap.md`](../in-progress/roadmap.md))
-**Status:** `next` (Scope skizziert, noch nicht aktiv)
+**Meilenstein:** M1 (siehe [`roadmap.md`](roadmap.md))
+**Status:** `in-progress` (aktiv ab 2026-05-27)
 **Datum:** 2026-05-27
 
 ## Ziel
@@ -175,7 +175,7 @@ hängen an 002b, nicht an 002a.
 ## Vorbedingungen für die Aktivierung
 
 1. **Slice 001** ist nach `done/` migriert (Akzeptanzkriterien laut
-   [`001-grpc-skeleton.md`](../in-progress/001-grpc-skeleton.md) §
+   [`001-grpc-skeleton.md`](../done/001-grpc-skeleton.md) §
    „Akzeptanzkriterien" erfüllt). Ohne Skeleton kein Anschluss-Point.
 2. **Open-Trigger 002** ist noch in `open/` (gegeben — siehe
    [`002-distroless-base-fuer-cgo.md`](../open/002-distroless-base-fuer-cgo.md)).
@@ -275,7 +275,7 @@ hängen an 002b, nicht an 002a.
   re-bewertet, falls Scope sich geändert hat).
 - **Roadmap-Lifecycle** wird in zwei Schritten aktualisiert:
   - **Bei Slice-Aktivierung** (Migration `next/` → `in-progress/`):
-    Slice-Tabelle in [`roadmap.md`](../in-progress/roadmap.md)
+    Slice-Tabelle in [`roadmap.md`](roadmap.md)
     führt 002a als `in-progress`; Open-Trigger-Block streicht 002
     (gleicher Lifecycle wie 001 beim Aktivieren).
   - **Bei Slice-Abschluss** (Merge des Schluss-PR, alle Akzeptanz-
@@ -306,7 +306,7 @@ hängen an 002b, nicht an 002a.
   kommen mit 002b.
 - **Kein Setzen von `MaxRecvMsgSize`** in `cmd/hsmdoc/main.go`.
   Der `TODO(slice-002)`-Marker bleibt unangetastet; Item §2.1 aus
-  [`offene-arbeitsfaeden.md`](../in-progress/offene-arbeitsfaeden.md)
+  [`offene-arbeitsfaeden.md`](offene-arbeitsfaeden.md)
   bleibt offen bis 002b (Encrypt-Stream landet erst dort).
 - **Kein Umbau der Coverage-Mechanik.** `gocovmerge`, Build-Tag-
   Trennung Unit/Integration und CGO-pflichtige Coverage-Pfade
@@ -350,5 +350,5 @@ gelistet.
 - [Open-Trigger 002 — CGO-Base-Switch](../open/002-distroless-base-fuer-cgo.md)
 - [ADR 0001 §2.3 — Accepted-ADRs sind immutable, Schärfung über neuen ADR](../../adr/0001-documentation-and-planning-structure.md)
 - [ADR 0002 — Docker-only Build-Pipeline](../../adr/0002-docker-only-build-pipeline.md)
-- [Folge-Slice 002b — PKCS#11-Adapter + Encrypt-Hexagon](002b-pkcs11-encrypt-hexagon.md)
-- [Roadmap M1](../in-progress/roadmap.md)
+- [Folge-Slice 002b — PKCS#11-Adapter + Encrypt-Hexagon](../next/002b-pkcs11-encrypt-hexagon.md)
+- [Roadmap M1](roadmap.md)
