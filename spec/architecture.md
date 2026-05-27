@@ -6,7 +6,7 @@
 | Kurzbeschreibung | Strukturelle und visuelle Sicht auf den HSM-Service und den Java-Client    |
 | Version          | 0.1                                                                        |
 | Status           | Entwurf                                                                    |
-| Datum            | 2026-05-26                                                                 |
+| Datum            | 2026-05-27                                                                 |
 | Begleitdokumente | [spec/lastenheft.md](lastenheft.md), [spec/spezifikation.md](spezifikation.md) |
 
 ---

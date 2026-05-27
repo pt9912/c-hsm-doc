@@ -4,11 +4,11 @@
 | ---------------- | ----------------------------------------------------------------------------------- |
 | Projektname      | `c-hsm-doc`                                                                         |
 | Kurzbeschreibung | HSM-gestützter Krypto-Dienst (Go) mit Java-Streaming-Client zur Dokumentverschlüsselung |
-| Zielplattform    | Linux-Container, Kubernetes, PKCS#11-HSM (SoftHSM, Utimaco, Thales)                 |
+| Zielplattform    | Linux-Container (Bare oder Kubernetes ≥ 1.28, mit oder ohne Service Mesh; siehe `HSM-ENV-004`), PKCS#11-HSM (SoftHSM, Utimaco, Thales) |
 | Hauptnutzer      | Backend-Dienste, die regulierungspflichtige Dokumente vertraulich ablegen müssen    |
 | Version          | 0.2                                                                                 |
 | Status           | Entwurf                                                                             |
-| Datum            | 2026-05-26                                                                          |
+| Datum            | 2026-05-27                                                                          |
 | Begleitdokument  | [spec/spezifikation.md](spezifikation.md) – Technische Spezifikation                |
 
 ---

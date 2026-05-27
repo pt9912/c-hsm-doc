@@ -6,7 +6,7 @@
 | Kurzbeschreibung | Implementierungs- und Verfahrensvorgaben für den HSM-Service und Java-Client   |
 | Version          | 0.2                                                                            |
 | Status           | Entwurf                                                                        |
-| Datum            | 2026-05-26                                                                     |
+| Datum            | 2026-05-27                                                                     |
 | Begleitdokument  | [spec/lastenheft.md](lastenheft.md) – Lastenheft (vertraglich abnahmebindend)  |
 
 ---
