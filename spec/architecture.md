@@ -314,7 +314,7 @@ Bezug: `HSM-FA-FAIL-001..002` (Lastenheft), `HSM-FA-FAIL-003..009`
 
 | Thema             | Verantwortliche Adapter            | Spezifikations-IDs                |
 | ----------------- | ---------------------------------- | --------------------------------- |
-| AuthN/AuthZ       | gRPC-Adapter (mTLS), Tenant-Filter | `HSM-API-GRPC-003`, `HSM-FA-TENANT-001..002` |
+| AuthN/AuthZ       | gRPC-Adapter (mTLS), Tenant-Filter | `HSM-API-GRPC-003`, `HSM-API-GRPC-006..008`, `HSM-FA-TENANT-001..002` |
 | Tracing           | OTel-Adapter                       | `HSM-NFA-OBS-001`, `HSM-NFA-OBS-004`           |
 | Metriken          | Prometheus-Adapter                 | `HSM-NFA-OBS-003`                              |
 | Strukturierte Logs| Logging-Adapter                    | `HSM-NFA-OBS-002`                              |

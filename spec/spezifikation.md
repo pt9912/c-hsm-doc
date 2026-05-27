@@ -113,7 +113,7 @@ Akzeptanz: Der Header-Key verlässt das HSM nie; der Code verwendet ausschließl
 
 ### HSM-DATA-001 – Audit-Eintrag
 
-Audit-Einträge MÜSSEN ein eindeutig versioniertes Schema haben mit Pflichtfeldern: `timestamp` (UTC, RFC 3339), `operation` (`encrypt`/`decrypt`/`key-lookup`/`key-rotate`/`error`), `key_id`, `key_version`, `doc_id`, `caller` (Subject aus mTLS oder Token), `tenant_id`, `result` (`ok`/`error`), `error_class`, `attempt` (Versuchszähler), `chunk_count`, `total_bytes`, `request_id`, `trace_id`, `stream_id`.
+Audit-Einträge MÜSSEN ein eindeutig versioniertes Schema haben mit Pflichtfeldern: `timestamp` (UTC, RFC 3339), `operation` (`encrypt`/`decrypt`/`key-lookup`/`key-rotate`/`error`), `key_id`, `key_version`, `doc_id`, `caller` (Identitätsstring gemäß `HSM-API-GRPC-008`), `tenant_id`, `result` (`ok`/`error`), `error_class`, `attempt` (Versuchszähler), `chunk_count`, `total_bytes`, `request_id`, `trace_id`, `stream_id`.
 
 Optionale Felder sind im Schema markiert.
 
@@ -556,8 +556,68 @@ Der Service MUSS interne Fehler auf gRPC-Statuscodes mappen. Mindestens:
 | `KEY_USAGE_EXHAUSTED`     | `FAILED_PRECONDITION`      |
 | `UNSUPPORTED_FORMAT_VERSION` | `FAILED_PRECONDITION`   |
 | `UNAUTHENTICATED`         | `UNAUTHENTICATED`          |
+| `IDENTITY_MISSING`        | `INTERNAL`                 |
 | `AUDIT_DURABILITY_FAILED` | `INTERNAL`                 |
 | `INTERNAL`                | `INTERNAL`                 |
+
+### HSM-API-GRPC-006 – Identitätsquelle und Konfigurationsschema
+
+Schärft `HSM-API-GRPC-003` (Lastenheft) für die in `HSM-ENV-004` und [ADR 0003](../docs/plan/adr/0003-plattform-und-mesh-neutralitaet.md) §2.2 festgelegten zwei Identitätsquellen.
+
+Der Server MUSS die Identitätsquelle über folgende Konfigurationsschlüssel exponieren (Pfad orientiert sich am bestehenden Config-Layout; die konkrete Repräsentation — YAML/Env/Flag — folgt dem allgemeinen Mechanismus aus `HSM-OPS-CFG-001..002`):
+
+| Schlüssel                           | Typ           | Default          | Bedeutung                                                                 |
+| ----------------------------------- | ------------- | ---------------- | ------------------------------------------------------------------------- |
+| `identity.source`                   | enum          | `mtls-subject`   | `mtls-subject` (Modi 1–3) oder `header` (Modus 4)                         |
+| `identity.mtls.subject_attribute`   | enum          | `subject_dn`     | `subject_dn` (RFC 4514) oder `san_uri` (erste URI-SAN, z. B. SPIFFE-ID)   |
+| `identity.header.name`              | string        | `x-spiffe-id`    | Header, aus dem die Identität gelesen wird (nur bei `source=header`)      |
+| `identity.header.format`            | enum          | `spiffe`         | `spiffe` (URI), `xfcc` (Envoy X-Forwarded-Client-Cert), `raw`             |
+| `identity.peer.allowlist`           | list<string>  | `[]`             | siehe `HSM-API-GRPC-007`                                                  |
+
+Validierung beim Start (`HSM-OPS-CFG-002`):
+
+- `identity.source=mtls-subject` und kein konfiguriertes Server-Client-CA → harter Start-Abbruch mit `INVALID_INPUT`-Klasse.
+- `identity.source=header` und `identity.peer.allowlist` leer oder fehlend → harter Start-Abbruch (Begründung: ADR 0003 §2.3, Schließung von `HSM-THREAT-002`-Eskalation).
+- Unbekannter Wert in `identity.source` / `identity.header.format` → harter Start-Abbruch.
+
+Default-Wechsel zwischen den beiden Quellen ist nur über Konfiguration zulässig; Auto-Detection ist verboten.
+
+### HSM-API-GRPC-007 – Peer-Allowlist für `header`-Quelle
+
+Bei `identity.source=header` MUSS der Server für jede eingehende Verbindung prüfen, ob die unmittelbare Peer-Identität gegen die konfigurierte `identity.peer.allowlist` matched, bevor der Identitäts-Header gelesen wird.
+
+Eintragsformate in der Allowlist:
+
+| Form                         | Beispiel                                       | Anwendung                                                |
+| ---------------------------- | ---------------------------------------------- | -------------------------------------------------------- |
+| `ip:<addr>` oder `cidr:<r>`  | `ip:127.0.0.1`, `ip:::1`, `cidr:10.42.0.0/16`  | Loopback aus Sidecar im selben Pod, Cluster-internes CIDR |
+| `spiffe:<id>`                | `spiffe://cluster.local/ns/mesh/sa/ztunnel`    | SPIFFE-ID des Mesh-Sidecars aus transportiertem mTLS     |
+| `san-uri:<uri>`              | `san-uri:spiffe://cluster.local/...`           | URI-SAN im Peer-Zertifikat                               |
+| `san-dns:<name>`             | `san-dns:istio-proxy.istio-system.svc`         | DNS-SAN im Peer-Zertifikat                               |
+
+Auswertungsreihenfolge:
+
+1. Ist der Peer per `ip:`/`cidr:` zulässig, MUSS der Server zusätzlich prüfen, dass der Transport-Layer dieselbe Maschinen-/Pod-Grenze nicht verletzt (Beispiel: bei `ip:127.0.0.1` MUSS der Listener auf Loopback gebunden sein; bei CIDR-Eintrag MUSS Transport-mTLS aktiv sein).
+2. Bei `spiffe:`/`san-*` MUSS der TLS-Handshake mit dem Peer mit gültigem Zertifikat abgeschlossen sein; die SAN-Werte werden gegen die Allowlist verglichen.
+3. Bei `match=false` MUSS die Anfrage mit gRPC-Status `UNAUTHENTICATED` abgewiesen werden, **bevor** der Identitäts-Header parsed wird. Audit-Eintrag MUSS mit `result=error`, `error_class=UNAUTHENTICATED`, `caller=anonymous@<peer-addr>` erfolgen.
+
+Metrik `hsmdoc_identity_peer_rejected_total` (Counter, Label: `reason` ∈ {`not_in_allowlist`, `tls_handshake_failed`, `header_missing`, `header_malformed`}) MUSS ergänzt werden (Erweiterung von `HSM-NFA-OBS-003`).
+
+### HSM-API-GRPC-008 – Ableitung des Audit-`caller` pro Identitätsquelle
+
+Das Audit-Feld `caller` (`HSM-DATA-001`) MUSS deterministisch aus der gewählten Quelle abgeleitet werden:
+
+| `identity.source` | Format                       | Beispiel-`caller`-String                              |
+| ----------------- | ---------------------------- | ----------------------------------------------------- |
+| `mtls-subject` mit `subject_attribute=subject_dn` | RFC 4514 DN  | `CN=svc-billing,OU=apps,O=acme,C=DE`                  |
+| `mtls-subject` mit `subject_attribute=san_uri`    | URI          | `spiffe://acme.example/ns/billing/sa/api`             |
+| `header` mit `format=spiffe`                      | URI          | `spiffe://acme.example/ns/billing/sa/api`             |
+| `header` mit `format=xfcc`                        | RFC 4514 DN aus `Subject="..."`-Feld | `CN=svc-billing,OU=apps,O=acme,C=DE`  |
+| `header` mit `format=raw`                         | unveränderter Header-Wert    | (frei, durch Betreiber definiert)                     |
+
+`tenant_id`-Ableitung aus dem `caller`-String folgt `HSM-FA-TENANT-001..002` (Lastenheft) und ist von dieser Spezifikation unabhängig: Sie KANN sowohl per Subject-Attribut, per SPIFFE-Path-Komponente als auch per separat konfigurierter Mapping-Regel erfolgen. Eine konkrete Regelpriorität ist Betreiber-Konfiguration, kein Spec-Pflichtteil.
+
+`caller` DARF NICHT leer sein, wenn die Anfrage akzeptiert wird; ein leerer/fehlender Identitätsstring trotz erfolgreicher Peer-Prüfung MUSS als `INTERNAL` behandelt und im Audit als `error_class=IDENTITY_MISSING` festgehalten werden.
 
 ---
 
@@ -588,6 +648,7 @@ Folgende Prometheus-Metriken MÜSSEN exponiert sein:
 - `hsmdoc_time_drift_seconds` (Gauge)
 - `hsmdoc_tenant_streams_active` (Gauge, Label: `tenant_id_hash`)
 - `hsmdoc_tenant_quota_rejections_total` (Counter, Label: `tenant_id_hash`, `quota_type`)
+- `hsmdoc_identity_peer_rejected_total` (Counter, Label: `reason` ∈ {`not_in_allowlist`, `tls_handshake_failed`, `header_missing`, `header_malformed`}) — siehe `HSM-API-GRPC-007`
 
 ### HSM-NFA-OBS-004 – Tracing-Spans
 
