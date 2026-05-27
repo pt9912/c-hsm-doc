@@ -88,6 +88,8 @@ make dev-down        # Compose-Umgebung herunterfahren (Volume bleibt)
   [`docs/plan/adr/`](docs/plan/adr/).
 - **Planning-Artefakte (Slices, Roadmap):**
   [`docs/plan/planning/{open,next,in-progress,done}/`](docs/plan/planning/).
+- **Quality-Gates:**
+  [`docs/user/quality.md`](docs/user/quality.md).
 
 ## Voraussetzungen
 

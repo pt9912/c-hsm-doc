@@ -87,6 +87,8 @@ make dev-down        # tear down the compose environment (volume preserved)
   [`docs/plan/adr/`](docs/plan/adr/).
 - **Planning artefacts (slices, roadmap):**
   [`docs/plan/planning/{open,next,in-progress,done}/`](docs/plan/planning/).
+- **Quality gates:**
+  [`docs/user/quality.md`](docs/user/quality.md).
 
 ## Prerequisites
 
