@@ -59,14 +59,17 @@ Die Stage führt `golangci-lint run ./...` in einem gepinnten
 `GOLANGCI_LINT_VERSION` im [`Makefile`](../../Makefile) gesetzt und als
 Build-Argument an das Dockerfile weitergegeben.
 
-Aktueller Bootstrap-Stand:
+Aktueller Stand (seit Slice 001):
 
-- Es gibt noch keine projektspezifische `.golangci.yml`.
-- Damit gilt das Default-Profil der gepinnten `golangci-lint`-Version.
-- Sobald der erste produktive M1-Slice echte Pakete unter `internal/`
-  einzieht, SOLL das Projektprofil um Architekturregeln ergänzt werden
-  (insbesondere `depguard` für die hexagonalen Schichtgrenzen aus
-  [`spec/architecture.md`](../../spec/architecture.md)).
+- Projektprofil [`.golangci.yml`](../../.golangci.yml) im Repo.
+- Aktiviert über den Standard-Set hinaus: `depguard`, `gocritic`,
+  `gosec`, `revive`. `misspell` ist bewusst aus (deutsche Kommentare
+  würden systematisch fehlmatchen).
+- `depguard` setzt die Schichtgrenzen aus `spec/architecture.md` durch:
+  `hexagon/domain/` ist abhängigkeitsfrei, `hexagon/application/` darf
+  nur Ports und Domain, `adapter/driving/` und `adapter/driven/`
+  dürfen sich nicht kreuz-importieren, generierter Code unter
+  `internal/gen/` ist von allen Lintern ausgenommen.
 
 Verstöße brechen den Build.
 
@@ -175,14 +178,15 @@ Die Zielarchitektur ist hexagonal:
 [`spec/architecture.md`](../../spec/architecture.md) beschreibt die
 Schichten und erlaubten Abhängigkeiten.
 
-Aktueller Bootstrap-Stand:
+Stand seit Slice 001:
 
-- Die Schichtstruktur ist dokumentiert.
-- Produktive Pakete unter `internal/` entstehen erst mit M1.
-- Automatisches Import-Enforcement per `golangci-lint depguard` ist
-  deshalb vorbereitet, aber noch nicht projektspezifisch konfiguriert.
+- Schichtstruktur ist in `spec/architecture.md` dokumentiert.
+- Erste produktive Pakete unter `internal/` sind eingezogen
+  (`adapter/driving/grpc`, `adapter/driving/health`, `config`).
+- Import-Enforcement per `golangci-lint depguard` ist in
+  [`.golangci.yml`](../../.golangci.yml) verdrahtet (siehe §2).
 
-Ab dem ersten produktiven Slice gilt:
+Verbindlich:
 
 - Domain- und Application-Pakete importieren keine Infrastruktur wie
   PKCS#11, gRPC, Storage oder Vendor-Adapter.

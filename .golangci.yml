@@ -1,0 +1,141 @@
+# golangci-lint v2 Projektprofil — c-hsm-doc.
+#
+# Bezug:
+#   - docs/user/quality.md §2 (Statische Analyse): Trigger zur
+#     Einführung war "erster produktiver M1-Slice mit Paketen
+#     unter internal/" — eingelöst mit Slice 001.
+#   - spec/architecture.md §2 (Komponentensicht): Schichten,
+#     deren Importgrenzen via depguard durchgesetzt werden.
+#   - ADR 0002 §2.4 (Pin-Politik): golangci-lint-Version per
+#     GOLANGCI_LINT_VERSION im Makefile gepinnt.
+#
+# Schicht-Matrix (hexagonale Architektur, HSM-ARCH-001):
+#
+#   hexagon/domain/        keine internen Imports, keine externen I/O-Libs
+#   hexagon/application/   MAY  hexagon/domain, hexagon/port
+#                          NOT  adapter, gen
+#   hexagon/port/**        MAY  hexagon/domain
+#                          NOT  hexagon/application, adapter, gen
+#   adapter/driving/**     MAY  hexagon/port/driving, hexagon/domain, gen
+#                          NOT  adapter/driven, hexagon/application impl
+#   adapter/driven/**      MAY  hexagon/port/driven, hexagon/domain
+#                          NOT  adapter/driving, gen
+#   cmd/**                 MAY  alles (Composition Root)
+#   internal/gen/**        unbeschränkt (generierter Code, "DO NOT EDIT")
+#
+# Pakete, die heute noch fehlen (z. B. hexagon/domain/), haben aktuell
+# keine Match-Files; die Regeln stehen aber vorab und greifen, sobald
+# Slice 002+ die Schichten einzieht.
+
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - depguard
+    - gocritic
+    - gosec
+    - revive
+  # `misspell` ist absichtlich nicht aktiv: das Projekt führt deutsche
+  # Kommentare und Identifier (z. B. "Konfiguration"); misspell schlägt
+  # darauf systematisch fehlmatchend an.
+
+  settings:
+    depguard:
+      rules:
+        # 1) Domain darf keine projekt-internen Abhängigkeiten haben.
+        domain-purity:
+          list-mode: lax
+          files:
+            - "**/internal/hexagon/domain/**"
+          deny:
+            - pkg: github.com/pt9912/c-hsm-doc/internal/adapter
+              desc: "hexagon/domain darf keine Adapter importieren (HSM-ARCH-001)."
+            - pkg: github.com/pt9912/c-hsm-doc/internal/hexagon/application
+              desc: "hexagon/domain darf keine Use-Cases importieren (HSM-ARCH-001)."
+            - pkg: github.com/pt9912/c-hsm-doc/internal/hexagon/port
+              desc: "hexagon/domain darf keine Ports importieren (HSM-ARCH-001)."
+            - pkg: github.com/pt9912/c-hsm-doc/internal/gen
+              desc: "hexagon/domain darf keinen generierten Code importieren."
+
+        # 2) Application darf Ports und Domain nutzen, aber keine Adapter.
+        application-allows-ports-only:
+          list-mode: lax
+          files:
+            - "**/internal/hexagon/application/**"
+          deny:
+            - pkg: github.com/pt9912/c-hsm-doc/internal/adapter
+              desc: "hexagon/application darf keine Adapter direkt importieren (HSM-ARCH-001); nur über Ports."
+            - pkg: github.com/pt9912/c-hsm-doc/internal/gen
+              desc: "hexagon/application darf keinen generierten Code direkt importieren; Mapping gehört in Adapter."
+
+        # 3) Ports definieren Interfaces; sie dürfen keine Adapter oder
+        #    Application-Logik importieren und nicht zueinander kreuzen.
+        ports-are-interfaces:
+          list-mode: lax
+          files:
+            - "**/internal/hexagon/port/**"
+          deny:
+            - pkg: github.com/pt9912/c-hsm-doc/internal/adapter
+              desc: "Ports dürfen keine Adapter importieren (HSM-ARCH-001)."
+            - pkg: github.com/pt9912/c-hsm-doc/internal/hexagon/application
+              desc: "Ports dürfen keine Use-Cases importieren (HSM-ARCH-001)."
+
+        # 4) Driving-Adapter dürfen nicht direkt Driven-Adapter importieren
+        #    (Cross-Adapter-Kopplung verletzt die Trennung).
+        driving-no-driven:
+          list-mode: lax
+          files:
+            - "**/internal/adapter/driving/**"
+          deny:
+            - pkg: github.com/pt9912/c-hsm-doc/internal/adapter/driven
+              desc: "driving-Adapter dürfen driven-Adapter nicht direkt importieren; Aufruf läuft über Application/Ports."
+
+        # 5) Driven-Adapter dürfen nicht direkt Driving-Adapter importieren
+        #    und sollen den generierten Wire-Code nicht kennen (Mapping
+        #    findet in driving statt).
+        driven-no-driving:
+          list-mode: lax
+          files:
+            - "**/internal/adapter/driven/**"
+          deny:
+            - pkg: github.com/pt9912/c-hsm-doc/internal/adapter/driving
+              desc: "driven-Adapter dürfen driving-Adapter nicht direkt importieren (HSM-ARCH-001)."
+            - pkg: github.com/pt9912/c-hsm-doc/internal/gen
+              desc: "Wire-Format-Mapping gehört in driving, nicht in driven."
+
+    gosec:
+      # G104 (errcheck-Duplikat) und G304 (File-Inclusion mit
+      # konfigurierten Pfaden) — Letzteres trifft sonst auf jeden
+      # legitimen Datei-Open-Aufruf in config.go / TLS-Load.
+      excludes:
+        - G104
+        - G304
+
+    revive:
+      rules:
+        - name: exported
+          severity: warning
+          disabled: false
+
+  exclusions:
+    rules:
+      # Generierter Code wird nicht reviewt.
+      - path: "internal/gen/"
+        linters:
+          - all
+
+      # Test-Code: gelockerte Schwellen für gosec/revive — Tests dürfen
+      # bewusst unsichere Pfade oder weniger streng dokumentierte
+      # Symbole nutzen.
+      - path: "_test\\.go$"
+        linters:
+          - gosec
+          - revive
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

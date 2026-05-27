@@ -37,15 +37,22 @@ import (
 const version = "0.1.0-slice-001"
 
 func main() {
+	os.Exit(appMain())
+}
+
+// appMain trennt die Programm-Logik vom os.Exit-Aufruf, damit
+// `defer`-Aufräumarbeit (signal.NotifyContext) garantiert läuft;
+// gocritic-Regel exitAfterDefer.
+func appMain() int {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--version", "-v":
 			fmt.Println("c-hsm-doc-server", version)
-			return
+			return 0
 		case "--help", "-h":
 			fmt.Println("c-hsm-doc-server — gRPC skeleton (Slice 001).")
 			fmt.Println("Configuration via environment variables: HSMDOC_GRPC_PORT, HSMDOC_HEALTH_PORT, HSMDOC_TLS_CERT, HSMDOC_TLS_KEY.")
-			return
+			return 0
 		}
 	}
 
@@ -55,7 +62,7 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Error("config", "error", err)
-		os.Exit(2)
+		return 2
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -63,8 +70,9 @@ func main() {
 
 	if err := run(ctx, cfg, logger); err != nil {
 		logger.Error("server exited with error", "error", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
