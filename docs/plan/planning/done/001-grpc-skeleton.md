@@ -1,7 +1,7 @@
 # 001 — gRPC-Skeleton für `c-hsm-doc-server`
 
-**Meilenstein:** M1 (siehe [`roadmap.md`](roadmap.md))
-**Status:** `in-progress` (aktiv ab 2026-05-27)
+**Meilenstein:** M1 (siehe [`../in-progress/roadmap.md`](../in-progress/roadmap.md))
+**Status:** `done` (geliefert am 2026-05-27)
 **Datum:** 2026-05-27
 
 ## Ziel
@@ -92,6 +92,39 @@ Dieser Slice ist der erste echte M1-Schritt nach dem Bootstrap-Stand.
 - [Lastenheft `HSM-API-GRPC-001..003`, `HSM-MVP-001..006`, `HSM-NFA-OPS-001..003`](../../../../spec/lastenheft.md)
 - [Spezifikation `HSM-API-GRPC-004..005`, `HSM-API-CFG-001..002`](../../../../spec/spezifikation.md)
 - [Architektur Kapitel 2 (Komponenten), 5.1 (Encrypt-Stream-Sequenz)](../../../../spec/architecture.md)
-- [Open-Trigger 001 — `go.sum` Strict-Mode (done)](../done/001-gosum-strict-mode.md)
+- [Open-Trigger 001 — `go.sum` Strict-Mode (done)](001-gosum-strict-mode.md)
 - [Open-Trigger 002 — CGO-Base-Switch](../open/002-distroless-base-fuer-cgo.md)
 - [Roadmap M1](../in-progress/roadmap.md)
+
+## Closure
+
+Geliefert am 2026-05-27 mit Commits `786cd1d` (Skeleton-Code:
+Proto-Contract, gRPC-Server-Stubs, TLS 1.3, Health-/Ready-Endpoints,
+12-Factor-Konfiguration), `9c4f59c` (Code-Review-Findings:
+Lifecycle, Config-Validierung, Test-Stabilität), `dcc1758`
+(Code-Review-Findings: Lint-Regeln und Build-Pipeline härten) und
+`003a034` (Roadmap-Hygiene: M1-DoD-05 abhaken, Slice-Tabelle).
+
+Akzeptanzkriterien erfüllt:
+
+- `make ci` grün auf `./internal/...` mit Coverage ≥ 80 % (M1-DoD-05
+  in der Roadmap auf `[x]`).
+- `make run` startet den Server; `grpcurl` erhält `UNIMPLEMENTED`
+  für `Encrypt`, `SERVING` für `Health`.
+- HSM-MVP-006-Vorbedingung erfüllt: kein JNI im Server,
+  `spec/proto/chsmdocv1/c_hsm_doc.proto` ist Java-tauglich
+  vorhanden.
+- Open-Trigger 001 (`go.sum` Strict-Mode) ist nach `done/`
+  migriert (M1-DoD-06 `[x]`).
+- Roadmap-Slice-Tabelle führt den Slice; Folgeplanung liegt in
+  Slices 002a/002b.
+
+**Aufgeschobene Findings:** Zwei Review-Items aus dem
+Slice-001-Code-Review-Lauf (Cross-Adapter-Sibling-Regel in
+`.golangci.yml`, Threshold-Two-Sources-of-Truth) sind bewusst nicht
+in 001 geschlossen worden; ihr Routing steht in
+[`../in-progress/offene-arbeitsfaeden.md`](../in-progress/offene-arbeitsfaeden.md)
+§1.1 und §1.2.
+
+**Folgeschritt:** Slice 002a (CGO-Build-Pipeline) ist als nächster
+M1-Schritt vorgesehen und löst Open-Trigger 002 ein.

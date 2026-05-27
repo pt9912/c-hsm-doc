@@ -81,14 +81,16 @@ Smoke-Test gegen Kind, Maven-Build-Analyse für Java-Client.
 
 ### Einstiegspunkt M1
 
-Der erste M1-Slice läuft als
-[`in-progress/001-grpc-skeleton.md`](001-grpc-skeleton.md) (gRPC-
+Der erste M1-Slice ist
+[`done/001-grpc-skeleton.md`](../done/001-grpc-skeleton.md) (gRPC-
 Skeleton mit allen vier Service-Methoden als `UNIMPLEMENTED`-Stubs,
-TLS 1.3, Health-/Ready-Endpoints, 12-Factor-Konfiguration). Open-
-Trigger 001 (`go.sum` Strict-Mode) ist mit diesem Slice eingelöst und
-nach
+TLS 1.3, Health-/Ready-Endpoints, 12-Factor-Konfiguration; geliefert
+am 2026-05-27). Open-Trigger 001 (`go.sum` Strict-Mode) ist mit
+diesem Slice eingelöst und nach
 [`done/001-gosum-strict-mode.md`](../done/001-gosum-strict-mode.md)
-migriert. Geplante Folge-Slices und Aktivierungspfade siehe dort.
+migriert. Der nächste M1-Schritt ist Slice 002a
+([`next/002a-cgo-build-pipeline.md`](../next/002a-cgo-build-pipeline.md));
+geplante Folge-Slices stehen in der Slice-Tabelle unten.
 
 ---
 
@@ -257,7 +259,7 @@ parallel arbeiten.
 
 | Slice | Titel                                              | Ort           | Status             | Letzter Touchpoint           |
 | ----- | -------------------------------------------------- | ------------- | ------------------ | ---------------------------- |
-| 001   | [gRPC-Skeleton](001-grpc-skeleton.md)              | `in-progress` | gates grün, DoD-05 erfüllt; Slice schließt mit M1-DoD-Erfüllung | Commit `dcc1758` (2026-05-27) |
+| 001   | [gRPC-Skeleton](../done/001-grpc-skeleton.md)      | `done`        | Akzeptanzkriterien erfüllt, Closure-Notiz im Slice-Dokument; M1-DoD-05/06 abgehakt | Closure-Commit (2026-05-27)  |
 | 002a  | [CGO-Build-Pipeline](../next/002a-cgo-build-pipeline.md) | `next`        | Build-Pipeline-Slice (Distroless-base, CGO, lddtree-Closure, `pkcs11-dlopen-smoke`, ADR 0004, ADR-0001-Hygiene); wartet auf Slice-001-Closure; löst Open-Trigger 002 ein | Plan-Commit (2026-05-27)     |
 | 002b  | [PKCS#11-Adapter + Encrypt-Hexagon](../next/002b-pkcs11-encrypt-hexagon.md) | `next`        | Encrypt-Slice (Hexagon-Schicht, PKCS#11-Adapter, Audit-Sink, Key-Registry); wartet auf Slice-002a-Closure und HKDF-Spike; trägt den fachlichen M1-Encrypt-Pfad | Plan-Commit (2026-05-27)     |
 | 003   | Container-Codec + Decrypt                          | _ungeschnitten_ | geplant; hängt an 002b (Container-Encoder + Pro-Chunk-AAD)         | —                            |
