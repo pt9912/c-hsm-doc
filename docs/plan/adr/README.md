@@ -18,9 +18,11 @@ geschärfte Stelle.
 
 | ADR  | Titel                                                                                | Status   | Datum      | Schärfungen / Folge-ADRs |
 | ---- | ------------------------------------------------------------------------------------ | -------- | ---------- | ------------------------ |
-| 0001 | [Dokumentations- und Planungsstruktur](0001-documentation-and-planning-structure.md) | Accepted | 2026-05-26 | —                        |
-| 0002 | [Docker-only Build- und Lieferkette für den Go-Server](0002-docker-only-build-pipeline.md) | Accepted | 2026-05-26 | —                        |
+| 0001 | [Dokumentations- und Planungsstruktur](0001-documentation-and-planning-structure.md) | Accepted | 2026-05-26 | [ADR 0005](0005-planstruktur-open-trigger-und-spike-pattern.md) (schärft §2.4: Open-Trigger-Lifecycle + Spike-Sub-Verzeichnisse) |
+| 0002 | [Docker-only Build- und Lieferkette für den Go-Server](0002-docker-only-build-pipeline.md) | Accepted | 2026-05-26 | [ADR 0004](0004-runtime-base-cgo-pkcs11.md) (schärft §2.7: Runtime-Base auf `distroless/base` für CGO/PKCS#11) |
 | 0003 | [Plattform- und Service-Mesh-Neutralität](0003-plattform-und-mesh-neutralitaet.md)    | Accepted | 2026-05-27 | —                        |
+| 0004 | [Runtime-Base für CGO/PKCS#11](0004-runtime-base-cgo-pkcs11.md)                       | Accepted | 2026-05-27 | —                        |
+| 0005 | [Planstruktur: Open-Trigger-Lifecycle und Spike-Sub-Verzeichnisse](0005-planstruktur-open-trigger-und-spike-pattern.md) | Accepted | 2026-05-27 | —                        |
 
 ---
 
