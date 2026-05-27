@@ -44,7 +44,7 @@ Inner-loop quality gates:
 make lint            # golangci-lint
 make test            # go test ./...
 make coverage-gate   # coverage gate (bootstrap-aware, ADR 0002 §2.5)
-make gates           # lint + test + coverage-gate
+make gates           # lint + test + coverage-gate + docs-check
 make ci              # gates + govulncheck
 make fullbuild       # ci + build (full closure)
 ```

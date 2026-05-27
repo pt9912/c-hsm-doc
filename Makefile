@@ -4,7 +4,7 @@
 # Containern. Host braucht nur Docker und `make`.
 #
 # Quality Gates:
-#   make gates       — inner-loop gates (lint + test + coverage-gate)
+#   make gates       — inner-loop gates (lint + test + coverage-gate + docs-check)
 #   make ci          — gates plus govulncheck
 #   make fullbuild   — ci plus build (runtime image)
 
