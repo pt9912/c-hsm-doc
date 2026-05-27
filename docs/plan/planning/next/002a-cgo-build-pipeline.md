@@ -74,14 +74,26 @@ hängen an 002b, nicht an 002a.
        gegen denselben Dateibaum. **BuildKit-Materialisierung:**
        Die Stage produziert keine Outputs, die das `runtime`-Image
        konsumiert; ohne expliziten Trigger würde BuildKit sie
-       überspringen. Deshalb existiert (a) ein Make-Target
-       `make closure-check` (`docker build --target closure-check`),
-       das die Stage explizit baut, **und** (b) ein Sentinel-`COPY`
-       im Runtime-Image
-       (`COPY --from=closure-check /closure-check.ok /etc/hsmdoc/closure-check.ok`),
-       der eine leere Marker-Datei aus der Stage zieht und damit
-       die Stage als Build-Voraussetzung für `make fullbuild`
-       erzwingt.
+       überspringen, und Cache-Hits würden die Verifikation gegen
+       einen neu gebauten Runtime-Rootfs umgehen. Deshalb drei
+       Mechanismen kombiniert:
+       1. **`touch /closure-check.ok` als letzte Stage-Anweisung**
+          — die Marker-Datei entsteht atomar als Konsequenz
+          erfolgreicher Verifikation; ohne sie schlägt der nächste
+          Schritt fehl.
+       2. **Sentinel-`COPY` im Runtime-Image:**
+          `COPY --from=closure-check /closure-check.ok /etc/hsmdoc/closure-check.ok`
+          zieht die Marker-Datei und macht die Stage damit zur
+          Build-Voraussetzung für jeden `docker build --target runtime`-
+          Lauf. Die Stage selbst hat
+          `COPY --from=runtime / /rootfs` als Input, damit jeder
+          Runtime-Stage-Wechsel ihren Cache invalidiert.
+       3. **`make closure-check` mit `--no-cache-filter closure-check`**
+          analog zum bestehenden `NO_CACHE_FILTER_*`-Pattern im
+          Makefile (siehe Slice-001-Stand,
+          `NO_CACHE_FILTER_TEST/LINT/COVERAGE`). Damit ist eine
+          explizite Re-Verifikation jederzeit erzwingbar und das
+          BuildKit-Caching umgehbar.
      - **Runtime-Smoke:** Ein winziges Go-Helper-Binary
        `cmd/pkcs11-dlopen-smoke/` ruft
        `dlopen($MODULE, RTLD_NOW)` auf; Fehlschlag → Exit-Code
@@ -322,11 +334,13 @@ gelistet.
   erfüllt),
   [`HSM-API-P11-001`](../../../../spec/lastenheft.md) (M1-Pflicht
   PKCS#11-Toolchain — 002a stellt die Build-Voraussetzung).
-- Indirekter Bezug (002a bereitet vor, Erfüllung in 002b):
-  [`HSM-FA-HSM-001..003`](../../../../spec/lastenheft.md) — der
-  Vendor-Smoke gegen SoftHSM v2 + zweites OSS-Modul aus 002b
-  setzt das in 002a vorbereitete CI-Image und die ADR-0004-
-  Modulwahl voraus.
+- Vorbereitender Bezug (002a setzt CI-Voraussetzungen, eigentliche
+  Akzeptanz in 002b): 002a installiert SoftHSM v2 und das in
+  ADR 0004 gewählte zweite OSS-Modul im CI-Image und legt die
+  Modulwahl fest — ohne dies ist der spätere Vendor-Smoke für
+  [`HSM-FA-HSM-001..003`](../../../../spec/lastenheft.md) in 002b
+  nicht durchführbar. 002a liefert selbst **keinen** Code, der
+  HSM-FA-HSM-001..003 erfüllt; siehe §Abgrenzung.
 - Direkter Implementierungs-/Akzeptanzbezug im Slice 002a
   (Teil-Erfüllung — Voll-Erfüllung in 002b):
   [Spezifikation `HSM-API-P11-002`](../../../../spec/spezifikation.md).

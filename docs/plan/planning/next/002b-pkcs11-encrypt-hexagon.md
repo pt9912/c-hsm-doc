@@ -116,7 +116,7 @@ Driven-Port:
   Vertrag wie `HeaderMAC`).
 - Der PKCS#11-Adapter implementiert den Port mit
   `C_EncryptInit` + `C_Encrypt` (siehe PKCS#11-Adapter-Sektion). Ein
-  Mock-Adapter (`internal/adapter/driven/chunksealer/inmemory/`) für
+  Mock-Adapter (`internal/testfixtures/chunksealer/`, siehe §Lint-Regeln) für
   Unit-Tests der Application-Schicht verwendet Go-`crypto/aes` +
   `crypto/cipher`. Der Mock liegt entweder in `_test.go`-Dateien im
   Testpackage oder in einem Test-Helper-Paket, das nur von Tests
@@ -520,14 +520,24 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   Chunks reserviert der Reader `len(plaintext)` gegen
   `HSMDOC_INFLIGHT_PLAINTEXT_BYTES`. Die Reservierung wird erst
   freigegeben, wenn der Chunk entweder emittiert, endgültig fehlgeschlagen
-  oder wegen Cancellation verworfen ist. Default:
-  `min(HSMDOC_MAX_HEAP_BYTES/4, HSMDOC_CHUNK_SIZE_BYTES *
-  HSMDOC_WORKERS * 2)`, Mindestwert `2 * HSMDOC_CHUNK_SIZE_BYTES`,
-  Maximalwert `HSMDOC_MAX_HEAP_BYTES/2`. Start-Abbruch, wenn die Formel
-  wegen zu kleinem Heap-Cap keinen gültigen Wert zulässt. Damit bleiben
-  Queue, Worker-Pool und Reorder-Buffer gemeinsam durch eine Byte-Grenze
-  kontrolliert; eine Queue-Kapazität von 256 bedeutet dann nur
-  Scheduling-Kapazität, nicht 256 volle Chunks im Heap.
+  oder wegen Cancellation verworfen ist. Default: `268435456`
+  (256 MiB) — deutlich unter dem `GOMEMLIMIT`-Default aus
+  [`HSM-CC-002`](../../../../spec/spezifikation.md) (1 GiB), damit
+  Encrypt-Pipeline + Reorder-Buffer + Audit-Buffering gemeinsam im
+  Gesamt-Heap-Cap bleiben. Mindestwert `2 * HSMDOC_CHUNK_SIZE_BYTES`,
+  Maximalwert `2147483648` (2 GiB). Start-Abbruch, wenn der konfigurierte
+  Wert die Untergrenze unterschreitet oder die Obergrenze überschreitet.
+  Damit bleiben Queue, Worker-Pool und Reorder-Buffer gemeinsam durch
+  eine Byte-Grenze kontrolliert; eine Queue-Kapazität von 256 bedeutet
+  dann nur Scheduling-Kapazität, nicht 256 volle Chunks im Heap.
+  **Abgrenzung zu `GOMEMLIMIT`:** `HSMDOC_INFLIGHT_PLAINTEXT_BYTES`
+  ist die anwendungsseitige In-flight-Plaintext-Cap (verhindert, dass
+  die Encrypt-Pipeline den Heap füllt); `GOMEMLIMIT` aus
+  [`HSM-CC-002`](../../../../spec/spezifikation.md) ist die Go-Runtime-
+  Gesamt-Heap-Cap (Default 1 GiB, Range 256 MiB..8 GiB). Die zwei
+  Größen sind semantisch verschieden: die In-flight-Cap muss
+  ausreichend kleiner als `GOMEMLIMIT` bleiben, sonst löst die
+  Go-Runtime GC-Pressure aus, bevor die Semaphore greift.
 - **Wartezeit-Strategie**
   ([`HSM-FA-QUEUE-003`](../../../../spec/spezifikation.md)):
   Wartezeit vor Ablehnung ist konfigurierbar
@@ -849,11 +859,10 @@ Folge-Slices erweitern denselben Abschnitt additiv.
   ([`HSM-FA-QUEUE-002`](../../../../spec/spezifikation.md)).
 - `HSMDOC_QUEUE_WAIT_MS` — Wartezeit vor Ablehnung, Default 0
   ([`HSM-FA-QUEUE-003`](../../../../spec/spezifikation.md)).
-- `HSMDOC_INFLIGHT_PLAINTEXT_BYTES` — harte Byte-Grenze für Plaintext,
-  der gelesen, queued, in Bearbeitung oder im Reorder-Buffer gehalten
-  wird. Default und Grenzen siehe §Queue; Validierung ist gekoppelt an
-  `HSMDOC_MAX_HEAP_BYTES`, `HSMDOC_CHUNK_SIZE_BYTES` und
-  `HSMDOC_WORKERS`.
+- `HSMDOC_INFLIGHT_PLAINTEXT_BYTES` — harte Byte-Grenze für
+  In-flight-Plaintext (Reader-Buffer + Queue + Worker + Reorder).
+  Default 256 MiB, Range `2 * HSMDOC_CHUNK_SIZE_BYTES` bis 2 GiB.
+  Abgrenzung zu `GOMEMLIMIT` (HSM-CC-002): siehe §Queue.
 - `HSMDOC_RETRY_BASE_MS` / `_FACTOR` / `_MAX_ATTEMPTS` — Exponential-
   Backoff-Parameter, Defaults 50 / 2 / 5
   ([`HSM-FA-RETRY-003`](../../../../spec/spezifikation.md)).
@@ -861,15 +870,11 @@ Folge-Slices erweitern denselben Abschnitt additiv.
   (Default `/etc/hsmdoc/keys.yaml`,
   [`HSM-FA-KEY-002`](../../../../spec/lastenheft.md),
   [`HSM-FA-KEY-004`](../../../../spec/lastenheft.md)).
-- `HSMDOC_MAX_HEAP_BYTES` — **Pflicht**, Heap-Cap für den Encrypt-
-  Pfad ([`HSM-NFA-MEM-001`](../../../../spec/lastenheft.md)).
-  Default `2147483648` (2 GiB pro Replica); gültiger Bereich
-  256 MiB..32 GiB; außerhalb des Bereichs → Start-Abbruch. Anker
-  für die In-flight-Byte-Semaphore (`min(/4, …)`) und für das
-  10-GiB-Heap-Cap-Gate. `HSM-NFA-MEM-001` liefert heute keinen
-  numerischen Default — der hier festgelegte Wert wird im Spec-
-  Update-Block (siehe unten) als Spec-Klarstellung in
-  `spec/spezifikation.md` propagiert.
+- **`HSMDOC_MAX_HEAP_BYTES` entfällt.** Die Go-Runtime-Gesamt-Heap-Cap
+  ist `GOMEMLIMIT` aus
+  [`HSM-CC-002`](../../../../spec/spezifikation.md) (Default 1 GiB,
+  Range 256 MiB..8 GiB); die anwendungsseitige In-flight-Cap ist
+  `HSMDOC_INFLIGHT_PLAINTEXT_BYTES` (siehe oben).
 - `HSMDOC_AUDIT_SINK_PATH` — Pfad zur JSONL-Audit-Datei. Pflicht.
 - `HSMDOC_AUDIT_SYNC_MODE` — `batched-fsync` (Default) oder
   `per-entry-fsync`
@@ -895,11 +900,20 @@ Folge-Slices erweitern denselben Abschnitt additiv.
   und `internal/adapter/driven/keyregistry/` explizit verbietet —
   Application darf diese Adapter ausschließlich über die Ports
   (`KeyRegistry`, `KeyBinding`, `ChunkSealer`, `HeaderMAC`, `AuditSink`)
-  konsumieren. Ein zusätzliches Make-Target
-  `make check-hexagon-imports` (Docker-only) führt einen statischen
-  `grep`-Check über `internal/hexagon/application/**.go` durch und
-  scheitert deterministisch, sobald ein PKCS#11- oder Adapter-
-  Importpfad auftaucht. Das Target ist in `make ci` eingehängt.
+  konsumieren. **Test-Mock-Ablage außerhalb `adapter/driven/`:**
+  Damit die Sperre nicht versehentlich Application-Unit-Tests blockt,
+  wohnt der In-Memory-Mock-Adapter unter
+  `internal/testfixtures/chunksealer/` (und analog für andere Ports),
+  **nicht** unter `internal/adapter/driven/chunksealer/inmemory/`.
+  `internal/testfixtures/**` darf von Application-Tests importiert
+  werden; produktiver Code (inkl. Adapter) hat keinen Grund, dorthin
+  zu greifen — die `depguard`-Matrix sperrt entsprechend.
+  Ein zusätzliches Make-Target `make check-hexagon-imports`
+  (Docker-only) führt einen statischen `grep`-Check über
+  `internal/hexagon/application/**.go` (ohne `_test.go`) durch und
+  scheitert deterministisch, sobald ein PKCS#11- oder
+  `adapter/driven`-Importpfad auftaucht. Das Target ist in
+  `make ci` eingehängt.
 - Re-Bewertung der Cross-Adapter-Sibling-Regel
   ([`offene-arbeitsfaeden.md` §1.1](../in-progress/offene-arbeitsfaeden.md)):
   Mit `driven/pkcs11/` zieht ein zweites Adapter-Sibling ein.
@@ -1070,21 +1084,24 @@ darf erst danach starten.
   Test) zeigt: ein `C_EncryptInit` + ein `C_Encrypt` pro Chunk; kein
   `C_EncryptUpdate` über Chunk-Grenzen.
 - **Heap-Cap** ([`HSM-FA-ENC-003`](../../../../spec/lastenheft.md),
-  [`HSM-NFA-MEM-001`](../../../../spec/lastenheft.md)):
+  [`HSM-NFA-MEM-001`](../../../../spec/lastenheft.md),
+  [`HSM-CC-002`](../../../../spec/spezifikation.md)):
   Memory-Probe-Test für **10-GiB-Eingabe** zeigt Heap-Cap unter
-  konfiguriertem Maximum (`HSMDOC_MAX_HEAP_BYTES`, vorgegeben über
-  HSM-NFA-MEM-001-Profil). Der 10-GiB-Test ist hartes
-  Abnahmekriterium aus HSM-FA-ENC-003 — keine Skalierungsannahme.
-  Ein zusätzlicher 1-GiB-Smoke darf als schneller CI-Pfad laufen,
-  ersetzt den 10-GiB-Gate aber nicht. Wenn der 10-GiB-Test die
-  PR-CI-Laufzeit sprengt, läuft er als Nightly-Job mit
-  Release-Block-Charakter (kein grüner Release ohne grünen
-  10-GiB-Job).
+  `GOMEMLIMIT` aus HSM-CC-002 (Test-Lauf nutzt
+  `GOMEMLIMIT=1GiB`, Default-Wert; In-flight-Cap
+  `HSMDOC_INFLIGHT_PLAINTEXT_BYTES` auf 256 MiB Default). Der
+  10-GiB-Test ist hartes Abnahmekriterium aus HSM-FA-ENC-003 —
+  keine Skalierungsannahme. Ein zusätzlicher 1-GiB-Smoke darf als
+  schneller CI-Pfad laufen, ersetzt den 10-GiB-Gate aber nicht.
+  Wenn der 10-GiB-Test die PR-CI-Laufzeit sprengt, läuft er als
+  Nightly-Job mit Release-Block-Charakter (kein grüner Release ohne
+  grünen 10-GiB-Job).
 - **In-flight-Byte-Grenze:** Testmatrix für
   `HSMDOC_CHUNK_SIZE_BYTES`, `HSMDOC_WORKERS`,
-  `HSMDOC_QUEUE_DEPTH`, `HSMDOC_MAX_HEAP_BYTES` und
-  `HSMDOC_INFLIGHT_PLAINTEXT_BYTES` belegt: Der Start bricht ab, wenn
-  die berechnete Plaintext-In-flight-Grenze nicht in das Heap-Cap passt;
+  `HSMDOC_QUEUE_DEPTH` und
+  `HSMDOC_INFLIGHT_PLAINTEXT_BYTES` belegt: Der Start bricht ab,
+  wenn `HSMDOC_INFLIGHT_PLAINTEXT_BYTES` außerhalb der Range
+  (`2 * CHUNK_SIZE`..2 GiB) liegt;
   unter Last blockiert der Reader an der Byte-Semaphore, statt weitere
   Chunks in die Queue zu legen. Der 10-GiB-Memory-Probe zeigt zusätzlich,
   dass Queue, Worker und Reorder-Buffer gemeinsam unter der konfigurierten
@@ -1234,12 +1251,27 @@ darf erst danach starten.
     deterministisch greift). Damit ist die Slice-002b-Konvention
     spec-bindend für alle Folge-Slices (insbesondere Slice 003
     Decrypt, der dieselbe Audit-Semantik schreibt).
-  - Spec-Text in `spezifikation.md` §HSM-NFA-MEM-001 ergänzt:
-    Numerischer Default für die Heap-Cap-Variable
-    (`HSMDOC_MAX_HEAP_BYTES`) ist 2 GiB pro Replica; gültiger
-    Bereich 256 MiB..32 GiB. Damit hat das 10-GiB-Heap-Cap-Gate
-    einen verbindlichen Spec-Anker statt einer Plan-internen
-    Festlegung.
+  - Spec-Text in `spezifikation.md` §HSM-CC-002 wird **nicht**
+    geändert — die Go-Runtime-Gesamt-Heap-Cap bleibt
+    `GOMEMLIMIT` Default 1 GiB, Range 256 MiB..8 GiB. Slice 002b
+    führt zusätzlich `HSMDOC_INFLIGHT_PLAINTEXT_BYTES` (Default
+    256 MiB) als anwendungsseitige In-flight-Plaintext-Cap ein —
+    semantisch andere Größe, semaphore-basiert auf den Reader-
+    Pfad gegrenzt, deutlich kleiner als `GOMEMLIMIT`. Das
+    10-GiB-Heap-Cap-Gate (HSM-FA-ENC-003) misst Heap-Wachstum
+    gegen `GOMEMLIMIT`, nicht gegen die In-flight-Cap.
+  - Spec-Text in `spezifikation.md` §HSM-FMT-002 ergänzt:
+    Container-Frame-`seq` ist **1-basiert** und monoton aufsteigend
+    je Stream (erster Chunk hat `seq=1`, nicht `seq=0`). Damit ist
+    die Audit-Konvention `chunk_count = max(seq)` spec-bindend.
+  - Spec-Text in `spezifikation.md` §HSM-FA-CHUNK-007 ergänzt:
+    `audit-attempt` ist pro Versuch idempotent über
+    `(stream_id, seq, attempt)`. Mehrere Audit-Einträge zum selben
+    `seq` (`attempt=1..N` mit `result=error` plus genau ein
+    finaler `result=ok`) sind ausdrücklich zulässig; der nächste
+    `seq+1` darf erst nach `result=ok` von `seq` geschrieben werden.
+    Damit hat die Audit-Adapter-Defense-Regel und die
+    Commit-Idempotenz-Akzeptanz einen Spec-Anker.
   - Spec-Text in `spezifikation.md` ergänzt
     `HSM-FA-FAIL-010 — Startup-Validierungsfehler` mit den in 002b
     eingeführten `STARTUP_*`-Codes:
