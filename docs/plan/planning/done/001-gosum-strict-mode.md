@@ -1,7 +1,13 @@
 # 001 — `go.sum` Strict-Mode aktivieren
 
+**Status:** `done` (eingelöst durch Slice 001 am 2026-05-27)
 **Trigger:** Befund M4 aus dem Build-Pipeline-Security-Review
 (2026-05-26).
+**Umsetzung:** Dockerfile `deps`-Stage nutzt jetzt
+`COPY go.mod go.sum ./` (strict, kein Wildcard) und
+`RUN ... && go mod verify`. Erste produktive Imports
+(`google.golang.org/grpc`, `google.golang.org/protobuf`) sind durch
+Slice 001 im Repository angekommen.
 
 ## Beobachtung
 

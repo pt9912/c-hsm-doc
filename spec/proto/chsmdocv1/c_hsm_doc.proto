@@ -1,0 +1,171 @@
+// c-hsm-doc gRPC contract.
+//
+// Bezug:
+//   - spec/lastenheft.md      HSM-API-GRPC-001..003
+//   - spec/spezifikation.md   HSM-API-GRPC-004..008, HSM-DATA-001..004
+//   - spec/architecture.md    §5.1 Encrypt-Stream-Sequenz, §5.2 Decrypt
+//
+// Slice 001 (gRPC-Skeleton) liefert nur die Vertragsdefinition und
+// codes.Unimplemented-Stubs. Echte Stream-Mechanik (Chunk-State-
+// Machine, Reorder-Buffer, AEAD pro Chunk) kommt in M1-Folge-Slices.
+
+syntax = "proto3";
+
+package chsmdoc.v1;
+
+option go_package = "github.com/pt9912/c-hsm-doc/internal/gen/chsmdocv1;chsmdocv1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+service HsmDocService {
+  // Encrypt: Client sendet Header, viele Chunks und Trailer; Server
+  // sendet Ack, Ciphertext-Chunks (möglicherweise reordered) und Final.
+  rpc Encrypt(stream EncryptRequest) returns (stream EncryptResponse);
+
+  // Decrypt: Client sendet Header und Ciphertext-Chunks; Server sendet
+  // Ack (mit KeyInfo) und Plaintext-Chunks.
+  rpc Decrypt(stream DecryptRequest) returns (stream DecryptResponse);
+
+  // ListKeys: aufrufbare Schlüssel des Mandanten.
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+
+  // Health: ergänzend zum HTTP-/healthz und /readyz für gRPC-Clients.
+  rpc Health(google.protobuf.Empty) returns (HealthResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Encrypt
+// ---------------------------------------------------------------------------
+
+message EncryptRequest {
+  oneof body {
+    EncryptHeader header = 1;
+    DataChunk chunk = 2;
+    EncryptTrailer trailer = 3;
+  }
+}
+
+message EncryptHeader {
+  string doc_id = 1;
+  string key_id = 2;
+  string tenant_id = 3;
+  uint32 chunk_size = 4;
+}
+
+message EncryptTrailer {
+  uint32 total_chunks = 1;
+}
+
+message EncryptResponse {
+  oneof body {
+    EncryptAck ack = 1;
+    DataChunk chunk = 2;
+    EncryptFinal final = 3;
+  }
+}
+
+message EncryptAck {
+  string stream_id = 1;
+}
+
+message EncryptFinal {
+  string stream_id = 1;
+  uint32 chunk_count = 2;
+  uint64 total_bytes = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Decrypt
+// ---------------------------------------------------------------------------
+
+message DecryptRequest {
+  oneof body {
+    DecryptHeader header = 1;
+    DataChunk chunk = 2;
+  }
+}
+
+message DecryptHeader {
+  string doc_id = 1;
+  string tenant_id = 2;
+}
+
+message DecryptResponse {
+  oneof body {
+    DecryptAck ack = 1;
+    DataChunk chunk = 2;
+  }
+}
+
+message DecryptAck {
+  string stream_id = 1;
+  KeyInfo key_info = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Common
+// ---------------------------------------------------------------------------
+
+message DataChunk {
+  uint32 seq = 1;
+  bytes payload = 2;
+}
+
+// ---------------------------------------------------------------------------
+// ListKeys
+// ---------------------------------------------------------------------------
+
+message ListKeysRequest {
+  string tenant_id = 1;
+}
+
+message ListKeysResponse {
+  repeated KeyInfo keys = 1;
+}
+
+message KeyInfo {
+  string key_id = 1;
+  string key_version = 2;
+  KeyStatus status = 3;
+  string algorithm = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp rotated_at = 6;
+  uint64 usage_count = 7;
+  uint64 usage_limit = 8;
+
+  enum KeyStatus {
+    KEY_STATUS_UNSPECIFIED = 0;
+    ACTIVE = 1;
+    DEPRECATED = 2;
+    REVOKED = 3;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Health
+// ---------------------------------------------------------------------------
+
+message HealthResponse {
+  Status service_status = 1;
+  Status hsm_status = 2;
+  uint32 sessions_active = 3;
+  uint32 sessions_max = 4;
+  uint32 queue_depth = 5;
+  uint32 queue_capacity = 6;
+  CircuitBreakerState circuit_breaker_state = 7;
+
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    UP = 1;
+    DEGRADED = 2;
+    DOWN = 3;
+  }
+
+  enum CircuitBreakerState {
+    CIRCUIT_BREAKER_STATE_UNSPECIFIED = 0;
+    CLOSED = 1;
+    HALF_OPEN = 2;
+    OPEN = 3;
+  }
+}

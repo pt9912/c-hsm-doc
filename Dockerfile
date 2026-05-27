@@ -36,12 +36,12 @@ ENV GOFLAGS="-mod=readonly -buildvcs=false" \
     GOMODCACHE=/go/pkg/mod \
     GOCACHE=/root/.cache/go-build
 
-COPY go.mod ./
-# go.sum kann fehlen (pre-`go mod tidy`-Bootstrap); [m] matched nichts,
-# wenn die Datei nicht existiert.
-COPY go.su[m] ./
+COPY go.mod go.sum ./
 
-RUN mkdir -p "$GOMODCACHE" && go mod download
+# Strict-Mode (Open-Trigger 001): seit dem ersten produktiven Import
+# (Slice 001) ist go.sum Pflicht und die Hash-Integrität wird beim
+# Build geprüft.
+RUN mkdir -p "$GOMODCACHE" && go mod download && go mod verify
 
 # ---- compile ---------------------------------------------------------------
 FROM deps AS compile
@@ -73,12 +73,18 @@ FROM deps AS coverage
 
 SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
 
-ARG COVERAGE_THRESHOLD=0
+# Slice 001 hat das Coverage-Gate aus dem Bootstrap-Modus gehoben
+# (ADR 0002 §2.5). Default ist 80 %; höhere Werte per
+# --build-arg COVERAGE_THRESHOLD=… überschreibbar.
+ARG COVERAGE_THRESHOLD=80
 ENV COVERAGE_THRESHOLD=${COVERAGE_THRESHOLD}
 
 COPY . .
+# Generated code aus dem coverpkg ausschließen (internal/gen/**). Die
+# zugehörigen .pb.go-Dateien tragen "// Code generated ... DO NOT EDIT."
+# am Anfang; Coverage über sie ist nicht aussagekräftig.
 RUN mkdir -p /out && \
-    COVERPKG=$(go list ./internal/... 2>/dev/null | tr '\n' ',' | sed 's/,$//') && \
+    COVERPKG=$(go list ./internal/... 2>/dev/null | grep -v '/internal/gen/' | tr '\n' ',' | sed 's/,$//') && \
     if [ -z "$COVERPKG" ]; then \
         echo "coverage: keine Produktiv-Pakete in ./internal/... — bootstrap mode"; \
         : > /out/coverage.out; \

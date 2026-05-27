@@ -104,17 +104,22 @@ make coverage-gate THRESHOLD=80
 Die Stage erzeugt eine Go-Coverage-Datei für `./internal/...` und ruft
 [`scripts/coverage-gate.sh`](../../scripts/coverage-gate.sh) auf.
 
-Aktueller Bootstrap-Stand:
+Default-Schwellwert seit Slice 001:
 
-- `THRESHOLD ?= 0` im [`Makefile`](../../Makefile).
-- Solange `./internal/...` keine produktiven Pakete enthält, akzeptiert
-  das Gate leeren Coverage-Input nur mit `COVERAGE_BOOTSTRAP=1`.
-- Sobald produktive Pakete unter `internal/` existieren, blockiert das
-  Script den Bootstrap-Bypass und erwartet echte Coverage-Daten.
+- `THRESHOLD ?= 80` im [`Makefile`](../../Makefile);
+  `ARG COVERAGE_THRESHOLD=80` im [`Dockerfile`](../../Dockerfile).
+- Generierter Protobuf-Code unter `internal/gen/` wird vom `-coverpkg`
+  ausgeschlossen (Dockerfile `coverage`-Stage), da `.pb.go`-Dateien
+  als `// DO NOT EDIT` gekennzeichnet sind.
+- Der Bootstrap-Bypass über `COVERAGE_BOOTSTRAP=1` greift nur, solange
+  `./internal/...` keine produktiven Pakete listet — seit Slice 001
+  ist das nicht mehr der Fall.
 
-Mit dem ersten M1-Slice wird das Gate auf einen echten Schwellwert
-gehoben. Der aktuelle Slice-Plan setzt dafür `make coverage-gate
-THRESHOLD=80` an.
+Höhere Schwellwerte sind per Override ohne Code-Change möglich:
+
+```bash
+make coverage-gate THRESHOLD=85
+```
 
 ---
 

@@ -12,8 +12,12 @@ IMAGE                   ?= c-hsm-doc-server
 GO_VERSION              ?= 1.26.3
 GOLANGCI_LINT_VERSION   ?= v2.12.1
 GOVULNCHECK_VERSION     ?= v1.1.4
+BUF_VERSION             ?= 1.47.2
 PYTHON_VERSION          ?= 3.13-slim
-THRESHOLD               ?= 0
+# Slice 001 hat das Coverage-Gate aus dem Bootstrap-Modus gehoben
+# (ADR 0002 §2.5). Default ist 80 %; höhere Werte per Override:
+#   make coverage-gate THRESHOLD=85
+THRESHOLD               ?= 80
 
 # Digest-Pinning fuer Supply-Chain (ADR 0002 §2.4): Default-Pfad nutzt
 # nur den Tag; Releases setzen vollstaendige <tag>@sha256:...-Strings,
@@ -24,6 +28,7 @@ THRESHOLD               ?= 0
 GO_BASE_IMAGE           ?= golang:$(GO_VERSION)
 GOLANGCI_BASE_IMAGE     ?= golangci/golangci-lint:$(GOLANGCI_LINT_VERSION)-alpine
 RUNTIME_BASE_IMAGE      ?= gcr.io/distroless/static-debian12:nonroot
+BUF_BASE_IMAGE          ?= bufbuild/buf:$(BUF_VERSION)
 PYTHON_BASE_IMAGE       ?= python:$(PYTHON_VERSION)
 
 # --no-cache-filter zwingt BuildKit, die Stage neu zu evaluieren, ohne
@@ -52,7 +57,8 @@ COMPOSE_DEV := docker compose -f docker-compose.dev.yml
 .DEFAULT_GOAL := help
 
 .PHONY: help deps compile lint test coverage coverage-gate build run clean \
-        gates ci fullbuild govulncheck docs-check dev-softhsm dev-down dev-purge
+        gates ci fullbuild govulncheck docs-check proto-gen proto-check \
+        dev-softhsm dev-down dev-purge
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -101,6 +107,34 @@ docs-check: ## Markdown link validator (docker-gekapseltes Python).
 	    -v "$(CURDIR)":/src -w /src \
 	    $(PYTHON_BASE_IMAGE) \
 	    python tools/check_refs.py
+
+# ---- code generation -------------------------------------------------------
+#
+# Proto-Generierung läuft als one-off docker run gegen ein gepinntes
+# buf-Image. Generierte Go-Dateien (internal/gen/) sind im Repo
+# eingecheckt (Slice 001, Vorbedingung 1: "Generated Protobuf-Code
+# eingecheckt vs. via Dockerfile-Stage generiert. Empfehlung:
+# einchecken, kein neuer Build-Stage; spart Toolchain-Dep.").
+
+proto-gen: ## (Re)generate Go code from spec/proto/**/*.proto into internal/gen/.
+	docker run --rm \
+	    -v "$(CURDIR)":/workspace -w /workspace \
+	    -e HOME=/workspace/.buf-cache \
+	    --user "$$(id -u):$$(id -g)" \
+	    $(BUF_BASE_IMAGE) generate
+	@rm -rf "$(CURDIR)/.buf-cache"
+	@echo "[proto-gen] regenerated internal/gen/ from spec/proto/"
+
+proto-check: ## Fail if checked-in generated code drifts from spec/proto/.
+	@cp -a internal/gen /tmp/c-hsm-doc-proto-snapshot
+	@$(MAKE) --no-print-directory proto-gen >/dev/null
+	@if ! diff -r internal/gen /tmp/c-hsm-doc-proto-snapshot >/dev/null 2>&1 ; then \
+	    echo "[proto-check] internal/gen/ is out of sync with spec/proto/ — run 'make proto-gen' and commit." ; \
+	    rm -rf /tmp/c-hsm-doc-proto-snapshot ; \
+	    exit 1 ; \
+	fi
+	@rm -rf /tmp/c-hsm-doc-proto-snapshot
+	@echo "[proto-check] internal/gen/ matches spec/proto/"
 
 # ---- aggregators -----------------------------------------------------------
 

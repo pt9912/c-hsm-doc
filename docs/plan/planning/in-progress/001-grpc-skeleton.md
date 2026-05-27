@@ -1,8 +1,8 @@
 # 001 — gRPC-Skeleton für `c-hsm-doc-server`
 
-**Meilenstein:** M1 (siehe [`roadmap.md`](../in-progress/roadmap.md))
-**Status:** `next` (Scope skizziert, noch nicht aktiv)
-**Datum:** 2026-05-26
+**Meilenstein:** M1 (siehe [`roadmap.md`](roadmap.md))
+**Status:** `in-progress` (aktiv ab 2026-05-27)
+**Datum:** 2026-05-27
 
 ## Ziel
 
