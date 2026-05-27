@@ -1,0 +1,106 @@
+# Modus 4 aus HSM-ENV-004 — Kubernetes mit Istio Sidecar (PeerAuthentication STRICT).
+#
+# Der istio-proxy Sidecar terminiert mTLS namens des Service-Containers.
+# Die originale Caller-Identität reist als x-forwarded-client-cert (XFCC)
+# Header an den Server. identity.source ist auf `header` zu setzen;
+# die Peer-Allowlist ankert den Trust am Loopback im selben Pod.
+#
+# Vorbedingungen:
+#   - Istio installiert (Sidecar-Modus, nicht Ambient).
+#   - Sidecar-Injection für den hsm-doc-Namespace aktiv.
+#
+# Bezug: HSM-ENV-004 Modus 4, HSM-API-GRPC-006..008, ADR 0003 §2.2-2.3.
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hsm-doc
+  labels:
+    # Aktiviert klassische Sidecar-Injection für alle Pods im NS.
+    istio-injection: enabled
+
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: hsm-doc-strict-mtls
+  namespace: hsm-doc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c-hsm-doc
+  mtls:
+    # STRICT: Nur mTLS akzeptieren. Plaintext-Verbindungen werden vom
+    # Sidecar abgewiesen, bevor sie den Service erreichen.
+    mode: STRICT
+
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: hsm-doc-allow-callers
+  namespace: hsm-doc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: c-hsm-doc
+  action: ALLOW
+  rules:
+    # Nur Caller-ServiceAccounts dürfen den Service ansprechen.
+    # Konkrete principals sind betriebsabhängig; das Pattern verwendet
+    # die SPIFFE-ID-Form, die Istio per Default vergibt.
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/billing/sa/billing-api"
+              - "cluster.local/ns/risk/sa/risk-engine"
+
+---
+# Erzwingt, dass der Envoy-Sidecar XFCC im Format "Subject" weiterreicht.
+# Default in Istio ist `APPEND_FORWARD`; das Beispiel macht es explizit.
+apiVersion: networking.istio.io/v1
+kind: EnvoyFilter
+metadata:
+  name: hsm-doc-xfcc-subject
+  namespace: hsm-doc
+spec:
+  workloadSelector:
+    labels:
+      app.kubernetes.io/name: c-hsm-doc
+  configPatches:
+    - applyTo: NETWORK_FILTER
+      match:
+        context: SIDECAR_INBOUND
+        listener:
+          filterChain:
+            filter:
+              name: "envoy.filters.network.http_connection_manager"
+      patch:
+        operation: MERGE
+        value:
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+            # SANITIZE_SET: vorhandene XFCC verwerfen, neuen setzen.
+            forward_client_cert_details: SANITIZE_SET
+            set_current_client_cert_details:
+              subject: true
+              uri: true
+              dns: true
+
+---
+# Hinweis zur Server-Konfiguration (kein Manifest, gehört in das spätere
+# Helm-Chart bzw. den Deployment-Pod-Env-Block):
+#
+#   env:
+#     - name: HSMDOC_IDENTITY_SOURCE
+#       value: "header"
+#     - name: HSMDOC_IDENTITY_HEADER_NAME
+#       value: "x-forwarded-client-cert"
+#     - name: HSMDOC_IDENTITY_HEADER_FORMAT
+#       value: "xfcc"
+#     - name: HSMDOC_IDENTITY_PEER_ALLOWLIST
+#       # Sidecar reicht Traffic über Loopback im selben Pod weiter.
+#       # Der gRPC-Listener MUSS in diesem Modus auf 127.0.0.1/::1
+#       # gebunden sein, nicht auf 0.0.0.0.
+#       value: "ip:127.0.0.1,ip:::1"

@@ -1,0 +1,110 @@
+# Modus 2 aus HSM-ENV-004 — Kubernetes ohne Service Mesh.
+#
+# mTLS terminiert am Service selbst (HSM-API-GRPC-003); identity.source
+# bleibt auf dem Default `mtls-subject`. Diese NetworkPolicy ist die
+# Cluster-Netzwerk-Härtung, die ohne Mesh-Datenebene den Pod-zu-Pod-
+# Verkehr begrenzt.
+#
+# Anwendung:
+#   kubectl apply -f mode-2-networkpolicy.yaml
+#
+# Bezug: HSM-ENV-004, HSM-API-GRPC-003, HSM-THREAT-002, ADR 0003 §2.5.
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: c-hsm-doc-default-deny
+  namespace: hsm-doc
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: c-hsm-doc
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: c-hsm-doc-allow-callers
+  namespace: hsm-doc
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: c-hsm-doc
+  policyTypes:
+    - Ingress
+  ingress:
+    # Caller-Backends dürfen den gRPC-Port (TLS 1.3 + mTLS am Server)
+    # ansprechen. Caller-Namespace wird per Label adressiert.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              hsm-doc-caller: "true"
+      ports:
+        - protocol: TCP
+          port: 9443
+
+    # Prometheus-Scraper darf den Metrics-Port (HSM-API-CFG-002)
+    # ansprechen. Health/Ready (HSM-API-CFG-001) sind im selben
+    # Health-Port.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: c-hsm-doc-egress
+  namespace: hsm-doc
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: c-hsm-doc
+  policyTypes:
+    - Egress
+  egress:
+    # Netzwerk-HSM (PKCS#11 über externen Endpoint). Concrete CIDR ist
+    # produktionsspezifisch.
+    - to:
+        - ipBlock:
+            cidr: 10.20.0.0/24
+      ports:
+        - protocol: TCP
+          port: 9000
+
+    # OTel-Collector im Monitoring-Namespace.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+
+    # DNS — Pflicht, sonst löst nichts auf.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

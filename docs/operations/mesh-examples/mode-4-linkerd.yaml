@@ -1,0 +1,84 @@
+# Modus 4 aus HSM-ENV-004 — Kubernetes mit Linkerd (Default-Konfiguration).
+#
+# Der linkerd-proxy Sidecar terminiert mTLS namens des Service-Containers.
+# Die Caller-Identität wird im Header `l5d-client-id` weitergereicht
+# (Format: <serviceaccount>.<namespace>.serviceaccount.identity.linkerd.cluster.local).
+# identity.source = `header`, header.format = `raw`.
+#
+# Vorbedingungen:
+#   - Linkerd installiert (`linkerd install | kubectl apply -f -`).
+#   - linkerd-cni DaemonSet ist optional, aber empfohlen.
+#
+# Bezug: HSM-ENV-004 Modus 4, HSM-API-GRPC-006..008, ADR 0003 §2.2-2.3.
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hsm-doc
+  annotations:
+    # Aktiviert Sidecar-Injection für alle Pods im NS.
+    linkerd.io/inject: enabled
+
+---
+# Linkerd erzwingt mTLS zwischen Mesh-Pods per Default — kein
+# PeerAuthentication-Äquivalent nötig. Server-Authorization über
+# Server- und ServerAuthorization-Ressourcen (Linkerd-Policy).
+
+apiVersion: policy.linkerd.io/v1beta1
+kind: Server
+metadata:
+  name: c-hsm-doc-grpc
+  namespace: hsm-doc
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: c-hsm-doc
+  port: 9443
+  proxyProtocol: gRPC
+
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: c-hsm-doc-callers
+  namespace: hsm-doc
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: Server
+    name: c-hsm-doc-grpc
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: hsm-doc-callers
+
+---
+apiVersion: policy.linkerd.io/v1beta1
+kind: MeshTLSAuthentication
+metadata:
+  name: hsm-doc-callers
+  namespace: hsm-doc
+spec:
+  # Nur explizit aufgelistete ServiceAccount-Identitäten dürfen
+  # den Service ansprechen. Linkerd bildet die Identität als
+  # <sa>.<ns>.serviceaccount.identity.linkerd.cluster.local.
+  identities:
+    - "billing-api.billing.serviceaccount.identity.linkerd.cluster.local"
+    - "risk-engine.risk.serviceaccount.identity.linkerd.cluster.local"
+
+---
+# Hinweis zur Server-Konfiguration (kein Manifest, gehört in das spätere
+# Helm-Chart bzw. den Deployment-Pod-Env-Block):
+#
+#   env:
+#     - name: HSMDOC_IDENTITY_SOURCE
+#       value: "header"
+#     - name: HSMDOC_IDENTITY_HEADER_NAME
+#       value: "l5d-client-id"
+#     - name: HSMDOC_IDENTITY_HEADER_FORMAT
+#       value: "raw"
+#     - name: HSMDOC_IDENTITY_PEER_ALLOWLIST
+#       # linkerd-proxy reicht Traffic über Loopback im selben Pod weiter.
+#       # Der gRPC-Listener MUSS auf 127.0.0.1/::1 gebunden sein.
+#       value: "ip:127.0.0.1,ip:::1"

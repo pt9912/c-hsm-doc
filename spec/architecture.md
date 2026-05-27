@@ -361,3 +361,4 @@ Bezug: `HSM-FA-FAIL-001..002` (Lastenheft), `HSM-FA-FAIL-003..009`
 - Technische Verfahren und Detail-Codes: [spec/spezifikation.md](spezifikation.md)
 - Bedrohungsmodell: Lastenheft Kapitel 13
 - Architekturentscheidungen: [docs/plan/adr/](../docs/plan/adr/)
+- Mesh-Beispiel-Manifeste je `HSM-ENV-004`-Modus: [docs/operations/mesh-examples/](../docs/operations/mesh-examples/)

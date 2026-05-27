@@ -1,0 +1,37 @@
+# Modus 3 aus HSM-ENV-004 — Kubernetes mit Istio Ambient ztunnel-only.
+#
+# ztunnel intercepted Traffic auf dem Knoten, wickelt ihn in HBONE
+# (HTTP-CONNECT über mTLS zwischen Knoten-ztunnels) und übergibt am
+# Ziel die ursprünglichen Bytes an den Pod. Da der Caller bereits
+# eigenes mTLS spricht (HSM-API-GRPC-003), reisen diese mTLS-Bytes
+# durch HBONE als opake Nutzlast — der Server sieht weiterhin das
+# originale Client-Zertifikat.
+#
+# Bewusst KEIN Waypoint-Proxy: ein Waypoint würde L7-Terminierung
+# einführen und damit Modus 4 erzwingen.
+#
+# Vorbedingungen:
+#   - Istio installiert (`istioctl install --set profile=ambient`).
+#   - kube-system: `istio-cni` DaemonSet aktiv.
+#
+# Bezug: HSM-ENV-004 Modus 3, ADR 0003 §2.1, HSM-API-GRPC-003.
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hsm-doc
+  labels:
+    # Aktiviert Ambient-Datenebene (ztunnel) für alle Pods im NS.
+    istio.io/dataplane-mode: ambient
+    # Negativ-Indikator: KEIN Waypoint-Label, sonst Modus-4-Semantik.
+    # istio.io/use-waypoint: ""   <-- NICHT setzen
+
+---
+# Die übrigen Manifeste (Deployment, Service, Secrets) sind hier
+# nicht abgebildet — sie sind identisch zu Modus 2. Das einzige
+# Ambient-spezifische Artefakt ist das Namespace-Label oben.
+#
+# Server-Konfiguration (siehe README.md, Abschnitt "Modus 1+2+3"):
+#   HSMDOC_IDENTITY_SOURCE=mtls-subject
+#   HSMDOC_IDENTITY_MTLS_SUBJECT_ATTRIBUTE=subject_dn
