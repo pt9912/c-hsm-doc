@@ -222,6 +222,21 @@ Beispiele für künftige Trigger, die noch keinen Eintrag haben:
 
 ---
 
+## Offene Arbeitsfäden
+
+Items, die in keiner Slice-/Trigger-/ADR-Datei sauber erfasst sind,
+laufen über die Routing-Liste
+[`offene-arbeitsfaeden.md`](offene-arbeitsfaeden.md). Aktueller Inhalt:
+zwei aufgeschobene Review-Items aus Slice 001 (cross-adapter rule,
+Threshold-Two-Sources), zwei TODO-Code-Marker (MaxRecvMsgSize für
+Slice 002, TLS-Reload für Slice 006), die noch nicht skizzierten
+M2-Slices 007+, ein anstehender SPIFFE/SPIRE-Open-Trigger und der
+Helm-Chart-NetworkPolicy-Sub-Scope für Slice 005. Jeder Eintrag dort
+trägt sein dauerhaftes Zuhause als Routing-Vermerk; sobald geroutet,
+wird er aus der Liste gestrichen.
+
+---
+
 ## Status der Roadmap
 
 | Meilenstein | Status                                                    |
