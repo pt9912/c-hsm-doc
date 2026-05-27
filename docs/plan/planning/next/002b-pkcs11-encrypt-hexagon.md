@@ -229,6 +229,12 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   neu validiert. (002a hat das Binary geliefert; 002b verdrahtet
   den Aufruf, weil hier erst der echte `C_Initialize`-Pfad
   entsteht.)
+  **Binary-Pfad-Vertrag:** Default-Pfad im Runtime-Image ist
+  `/usr/local/bin/pkcs11-dlopen-smoke` (von 002a fest auf diesen
+  Pfad ausgeliefert). Optionaler Override über
+  `HSMDOC_PKCS11_DLOPEN_SMOKE_BIN`. Fehlt das Binary unter dem
+  konfigurierten Pfad → Start-Abbruch mit
+  `STARTUP_PKCS11_DLOPEN_FAILED`.
 - **Neu:** `KeyBinding`-Port-Implementierung: nimmt einen
   Registry-`KeyRecord` mit `pkcs11_label` und
   `master_hmac_pkcs11_label`, validiert beide Labels gegen das HSM und
@@ -464,6 +470,19 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
      gRPC-Layer kann Backpressure/Reorder-Buffer-Logik
      fahren, ohne den Frame zu decodieren. Slice 003 spiegelt
      die Doppelung im Decrypt-Pfad.
+     **Typ-Mismatch DataChunk.seq vs. HSM-FMT-002-`seq`:**
+     `DataChunk.seq` ist heute `uint32` (Proto), HSM-FMT-002 spezifiziert
+     `seq` als 8 Byte BE (uint64). Slice 002b zieht **`DataChunk.seq`
+     auf `uint64` hoch** (additive Proto-Erweiterung im selben Diff
+     wie `container_header`/`container_trailer`); ohne Konsumenten
+     außerhalb der `UNIMPLEMENTED`-Stubs aus Slice 001 ist das
+     wire-kompatibel (Protobuf-`uint32`/`uint64` sind beide Varint
+     auf demselben Field-Number; Source-Break im generierten
+     Go-Code ist genauso akzeptabel wie beim `REVOKED →
+     DESTROYED`-Rename). Damit haben Wire-`seq` und Container-
+     Frame-`seq` denselben Wertebereich; `EncryptTrailer.total_chunks`
+     und `EncryptFinal.chunk_count` werden im selben Diff
+     ebenfalls auf `uint64` gehoben.
   4. Server → `container_trailer` mit den Trailer-Bytes.
   5. Server → `EncryptFinal{stream_id, chunk_count, total_bytes}`.
 
@@ -642,9 +661,17 @@ Audit-Sink ein:
 - **Neu (adapter):** `internal/adapter/driven/audit/file/` —
   JSONL-Append-Sink. Schreibreihenfolge append-only in `seq`-Folge je
   Stream. Der Adapter validiert diese Reihenfolge defensiv und lehnt
-  einen Eintrag ab, dessen `seq` nicht dem nächsten erwarteten Wert für
-  den Stream entspricht; das primäre Ordering passiert im Encrypt-
-  Use-Case vor `AuditSink.Write`, nicht im Dateiadapter. Sync-Strategie
+  einen Eintrag ab, dessen `seq` **kleiner als der zuletzt
+  erfolgreich persistierte `seq` ist** (Rückwärtssprung) **oder
+  größer als der aktuell offene `seq+1`** (Vorwärtssprung über den
+  nächsten erwarteten Wert hinaus). Mehrere Einträge zum **selben
+  offenen `seq=k`** sind dagegen ausdrücklich zulässig — Retries
+  produzieren je Versuch einen eigenen `result=error`-Eintrag
+  (siehe Commit-Idempotenz-Akzeptanz), und erst der finale
+  `result=ok` mit demselben `seq=k` schließt den Eintrag ab; der
+  nächste zulässige `seq` ist danach `k+1`. Das primäre Ordering
+  passiert im Encrypt-Use-Case vor `AuditSink.Write`, nicht im
+  Dateiadapter. Sync-Strategie
   konfigurierbar
   ([`HSM-FA-AUDIT-010`](../../../../spec/spezifikation.md)):
   - `batched-fsync` (Default; ≤ 100 ms oder ≤ 1000 Einträge):
@@ -834,12 +861,25 @@ Folge-Slices erweitern denselben Abschnitt additiv.
   (Default `/etc/hsmdoc/keys.yaml`,
   [`HSM-FA-KEY-002`](../../../../spec/lastenheft.md),
   [`HSM-FA-KEY-004`](../../../../spec/lastenheft.md)).
-- `HSMDOC_MAX_HEAP_BYTES` — Heap-Cap für den Encrypt-Pfad
-  ([`HSM-NFA-MEM-001`](../../../../spec/lastenheft.md)).
+- `HSMDOC_MAX_HEAP_BYTES` — **Pflicht**, Heap-Cap für den Encrypt-
+  Pfad ([`HSM-NFA-MEM-001`](../../../../spec/lastenheft.md)).
+  Default `2147483648` (2 GiB pro Replica); gültiger Bereich
+  256 MiB..32 GiB; außerhalb des Bereichs → Start-Abbruch. Anker
+  für die In-flight-Byte-Semaphore (`min(/4, …)`) und für das
+  10-GiB-Heap-Cap-Gate. `HSM-NFA-MEM-001` liefert heute keinen
+  numerischen Default — der hier festgelegte Wert wird im Spec-
+  Update-Block (siehe unten) als Spec-Klarstellung in
+  `spec/spezifikation.md` propagiert.
 - `HSMDOC_AUDIT_SINK_PATH` — Pfad zur JSONL-Audit-Datei. Pflicht.
 - `HSMDOC_AUDIT_SYNC_MODE` — `batched-fsync` (Default) oder
   `per-entry-fsync`
   ([`HSM-FA-AUDIT-010`](../../../../spec/spezifikation.md)).
+  M1 läuft im Klassifikations-Modus „Standardumgebung" gemäß
+  HSM-FA-AUDIT-010; regulierte Profile setzen
+  `HSMDOC_AUDIT_SYNC_MODE=per-entry-fsync` und werden in
+  M2-Compliance-Slices abgenommen. Die `Write`-Durability-Garantie
+  ist in **beiden** Modi gleich (siehe §Audit-Adapter:
+  `Write` blockt bis fsync).
 - `HSMDOC_TIME_SOURCE` — in 002b genau `system-ntp`. Andere Werte
   sind reserviert und führen zu Start-Abbruch.
 - `HSMDOC_TIME_TRUSTED` — muss im Produktionspfad exakt `true` sein;
@@ -849,6 +889,17 @@ Folge-Slices erweitern denselben Abschnitt additiv.
 
 ### Lint-Regeln (`.golangci.yml`)
 
+- **Application-Schicht-Sperre:** Die bestehende `depguard`-Regel
+  für `internal/hexagon/application/**` wird so erweitert, dass sie
+  Imports aus `internal/adapter/driven/pkcs11/`, `internal/adapter/driven/audit/`
+  und `internal/adapter/driven/keyregistry/` explizit verbietet —
+  Application darf diese Adapter ausschließlich über die Ports
+  (`KeyRegistry`, `KeyBinding`, `ChunkSealer`, `HeaderMAC`, `AuditSink`)
+  konsumieren. Ein zusätzliches Make-Target
+  `make check-hexagon-imports` (Docker-only) führt einen statischen
+  `grep`-Check über `internal/hexagon/application/**.go` durch und
+  scheitert deterministisch, sobald ein PKCS#11- oder Adapter-
+  Importpfad auftaucht. Das Target ist in `make ci` eingehängt.
 - Re-Bewertung der Cross-Adapter-Sibling-Regel
   ([`offene-arbeitsfaeden.md` §1.1](../in-progress/offene-arbeitsfaeden.md)):
   Mit `driven/pkcs11/` zieht ein zweites Adapter-Sibling ein.
@@ -996,6 +1047,16 @@ darf erst danach starten.
     `CKA_SENSITIVE=true`, `CKA_DERIVE=true` — Voraussetzung für
     den HKDF-Profil-A-Pfad gemäß HSM-FMT-006). Beide Labels werden
     in einer Test-Key-Registry-Datei eingetragen.
+  - **Modul-spezifisches Key-Setup:** Das zweite OSS-Modul
+    (Default OpenCryptoki, siehe ADR 0004) wird mit dem für das
+    Modul passenden Master-HMAC-Keytyp initialisiert — z. B.
+    `CKK_GENERIC_SECRET` (OpenCryptoki ICA), `CKK_SHA256_HMAC`
+    oder ein modul-spezifisches Äquivalent. Die genaue Wahl je
+    Modul ist Output des HKDF-Spike (Vorbedingung 3) und in ADR 0004
+    bzw. der Folge-ADR 0005 dokumentiert. Setup-Skripte liegen
+    pro Modul als separates Init-Script im Repo
+    (`ci/keys-init/{softhsm,opencryptoki,…}.sh`), damit kein
+    Vendor-Sniffing im Adapter-Code nötig wird.
   - Encrypt-Stream über einen in-process Test-Client mit 100 MiB
     Klartext; ein zusätzlicher `grpcurl`-Smoke gegen den Runtime-
     Container ist zulässig, aber nicht die Coverage-Quelle.
@@ -1144,6 +1205,10 @@ darf erst danach starten.
   - `EncryptResponse.oneof body` ist um `bytes container_header = 4`
     und `bytes container_trailer = 5` ergänzt; generierte Stubs
     (`internal/gen/chsmdocv1/`) sind regeneriert und im Commit.
+  - `DataChunk.seq` ist von `uint32` auf `uint64` gehoben — entspricht
+    HSM-FMT-002 (`seq` 8 Byte BE). Im selben Diff: `EncryptTrailer.total_chunks`
+    und `EncryptFinal.chunk_count` auf `uint64`, weil HSM-FMT-003
+    `total_chunks` ebenfalls als 8 Byte BE festschreibt.
   - `DecryptRequest.oneof body` ist additiv um spiegelbildliche
     `bytes container_header` und `bytes container_trailer`-Felder
     vorbereitet — Slice 003 nutzt sie, Slice 002b lässt sie auf
@@ -1163,6 +1228,18 @@ darf erst danach starten.
   - Spec-Text in `spezifikation.md` §HSM-API-GRPC-* dokumentiert
     den Wire-Ablauf (Ack → container_header → DataChunk* →
     container_trailer → Final) als verbindliche Reihenfolge.
+  - Spec-Text in `spezifikation.md` §HSM-DATA-001 ergänzt: Bei
+    `result=ok` ist `error_class` der konstante String `"none"`
+    (nicht leer, nicht `null`, damit JSONL-Schema-Validierung
+    deterministisch greift). Damit ist die Slice-002b-Konvention
+    spec-bindend für alle Folge-Slices (insbesondere Slice 003
+    Decrypt, der dieselbe Audit-Semantik schreibt).
+  - Spec-Text in `spezifikation.md` §HSM-NFA-MEM-001 ergänzt:
+    Numerischer Default für die Heap-Cap-Variable
+    (`HSMDOC_MAX_HEAP_BYTES`) ist 2 GiB pro Replica; gültiger
+    Bereich 256 MiB..32 GiB. Damit hat das 10-GiB-Heap-Cap-Gate
+    einen verbindlichen Spec-Anker statt einer Plan-internen
+    Festlegung.
   - Spec-Text in `spezifikation.md` ergänzt
     `HSM-FA-FAIL-010 — Startup-Validierungsfehler` mit den in 002b
     eingeführten `STARTUP_*`-Codes:

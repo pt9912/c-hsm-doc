@@ -71,14 +71,39 @@ hängen an 002b, nicht an 002a.
        dass `lddtree` keine „not found"-Einträge meldet.
        Distroless selbst hat keine Shell und kein `ldd`, deshalb
        passiert die Prüfung außerhalb des Runtime-Images, aber
-       gegen denselben Dateibaum.
+       gegen denselben Dateibaum. **BuildKit-Materialisierung:**
+       Die Stage produziert keine Outputs, die das `runtime`-Image
+       konsumiert; ohne expliziten Trigger würde BuildKit sie
+       überspringen. Deshalb existiert (a) ein Make-Target
+       `make closure-check` (`docker build --target closure-check`),
+       das die Stage explizit baut, **und** (b) ein Sentinel-`COPY`
+       im Runtime-Image
+       (`COPY --from=closure-check /closure-check.ok /etc/hsmdoc/closure-check.ok`),
+       der eine leere Marker-Datei aus der Stage zieht und damit
+       die Stage als Build-Voraussetzung für `make fullbuild`
+       erzwingt.
      - **Runtime-Smoke:** Ein winziges Go-Helper-Binary
-       `cmd/pkcs11-dlopen-smoke/` (in derselben Build-Stage
-       erzeugt, ins Runtime-Image kopiert) ruft
+       `cmd/pkcs11-dlopen-smoke/` ruft
        `dlopen($MODULE, RTLD_NOW)` auf; Fehlschlag → Exit-Code
        ≠ 0 mit `dlerror()`-Output. Das deckt RPATH-/`$ORIGIN`-
        Auflösung **echt zur Laufzeit** ab und braucht keine
        Shell im Distroless.
+       **Bau-Stage:** Der Smoke wird in derselben `build`-Stage
+       erzeugt wie das Server-Binary (`CGO_ENABLED=1`, Debian-
+       Builder-Image) — ein zweiter `RUN go build ./cmd/pkcs11-dlopen-smoke`
+       reicht. Das Binary nutzt `dlopen` über Cgo
+       (`#include <dlfcn.h>`; Begründung in ADR 0004 §Smoke-Helper:
+       Cgo ist konsistent mit dem späteren PKCS#11-Adapter,
+       vermeidet eine neue `purego`-Dependency und keinen weiteren
+       Go-Module-Strict-Mode-Trade-off). Die Datei
+       `cmd/pkcs11-dlopen-smoke/main.go` trägt deshalb
+       `//go:build cgo` plus einen Pure-Go-Stub
+       (`cmd/pkcs11-dlopen-smoke/stub_nocgo.go` mit `//go:build !cgo`),
+       damit der `coverage`-Stage (`CGO_ENABLED=0 go test ./...`)
+       nicht beim Übersetzen des Pakets bricht. Festgelegter Pfad
+       im Runtime-Image: `/usr/local/bin/pkcs11-dlopen-smoke`;
+       ENV-Override `HSMDOC_PKCS11_DLOPEN_SMOKE_BIN` ist
+       optional (Default zeigt auf diesen Pfad).
        **Aufrufpunkte in 002a:**
        - `make smoke-dlopen` ruft das Binary außerhalb des
          Service-Starts auf (CI-Pfad, Forensik, manuelle Diagnose).
@@ -124,9 +149,16 @@ hängen an 002b, nicht an 002a.
   Smoke aus 002b im CI-Image bereitstellen. Default: OpenCryptoki
   (ICA-/Software-Token-Modus). Falls OpenCryptoki im CI nicht stabil
   bedienbar ist, wird die Alternative (z. B. Mozilla-NSS-Softoken)
-  in ADR 0004 festgelegt. Die Auswahl ist Teil von 002a, die
-  funktionale Validierung gegen `CKM_AES_GCM` + `CKM_HKDF_DERIVE`
-  läuft erst in 002b (Vorbedingung 3 dort).
+  in ADR 0004 festgelegt. Die **Vor-Auswahl** ist Teil von 002a,
+  die funktionale Validierung gegen `CKM_AES_GCM` +
+  `CKM_HKDF_DERIVE` läuft erst in 002b (Vorbedingung 3 dort).
+  **ADR-0004-Vorläufigkeit:** Sollte der HKDF-Spike in 002b
+  zeigen, dass das in ADR 0004 gewählte Zweitmodul die geforderten
+  Mechanismen nicht stabil bedient, wird die Modulwahl in einer
+  Folge-ADR (geplant: `ADR 0005 — Zweitmodul-Korrektur`)
+  protokolliert; ADR 0004 selbst bleibt nach
+  [ADR 0001 §2.3](../../adr/0001-documentation-and-planning-structure.md)
+  unverändert.
 
 ## Vorbedingungen für die Aktivierung
 
@@ -152,17 +184,32 @@ hängen an 002b, nicht an 002a.
 ## Akzeptanzkriterien
 
 - `make ci` läuft grün gegen den Slice-002a-Code (Lint, Unit-Tests,
-  Coverage ≥ 80 % auf `./internal/...`, docs-check, govulncheck) —
-  ohne PKCS#11-Adapter-Code, also dieselbe Aggregations-Mechanik wie
-  in Slice 001. Zusätzlich läuft `make fullbuild` grün, weil der
-  kritische 002a-Pfad erst im Runtime-Image entsteht: `build`-Stage mit
+  **Coverage-Erhalt** ≥ 80 % auf `./internal/...` — 002a fügt keinen
+  `internal/`-Code hinzu, das Gate erbt den Slice-001-Stand und darf
+  nicht regressieren; eigentlicher Coverage-Mechanik-Umbau erst in
+  002b, docs-check, govulncheck). **`make ci` aggregiert in 002a
+  zusätzlich** die neuen Image-Gates aus diesem Slice, damit kein
+  Akzeptanzkriterium hinter einem nur-manuellen Aufruf versteckt
+  bleibt:
+  - `make closure-check` (BuildKit baut die `closure-check`-Stage),
+  - `make smoke-dlopen` (Runtime-Image-Smoke gegen das CI-SoftHSM-
+    Modul),
+  - `make image-scan` (Trivy gegen das Runtime-Image).
+
+  Zusätzlich läuft `make fullbuild` grün, weil der kritische
+  002a-Pfad erst im Runtime-Image entsteht: `build`-Stage mit
   `CGO_ENABLED=1`, Distroless-base-Runtime, `COPY` der Closure aus
-  `deps-closure` und `closure-check`-Stage. Da 002a bewusst noch keinen
-  PKCS#11-Adapter-Code in den Server zieht, ist ein dynamisch gelinktes
-  `hsmdoc`-Server-Binary **kein** 002a-Akzeptanzkriterium; die echte
-  Server-Linkage gegen PKCS#11 wird in 002b geprüft, sobald der
-  produktive Adapter importiert wird. Ein grünes `make ci` ohne grünes
-  Runtime-Image ist für 002a nicht abnahmefähig.
+  `deps-closure`, Sentinel-`COPY` aus `closure-check`. Da 002a bewusst
+  noch keinen PKCS#11-Adapter-Code in den Server zieht, ist ein
+  dynamisch gelinktes `hsmdoc`-Server-Binary **kein** 002a-Akzeptanz-
+  kriterium; die echte Server-Linkage gegen PKCS#11 wird in 002b
+  geprüft, sobald der produktive Adapter importiert wird. Ein grünes
+  `make ci` ohne grünes Runtime-Image ist für 002a nicht
+  abnahmefähig.
+- **`docs-check`** greift auch für die in 002a neu angelegten ADRs
+  (`ADR 0004` und die Folge-ADR zu `ADR 0001`) sowie für die
+  Roadmap-/ADR-Index-Updates; kaputte Cross-Refs sind ein
+  PR-Blocker.
 - **Shared-Library-Closure** (Build-Pipeline):
   Zweistufige Verifikation grün — (a) `lddtree --root
   $RUNTIME_FS` aus der `closure-check`-Stage meldet keine
@@ -223,12 +270,6 @@ hängen an 002b, nicht an 002a.
     kriterien grün): Slice-Tabelle führt 002a als `done`,
     Slice-Datei wandert nach `done/`; M1-DoD-Tabelle hakt
     `M1-DoD-07` ab (Open-Trigger 002 nach `done/`).
-- **MaxRecvMsgSize-TODO** in `cmd/hsmdoc/main.go` bleibt stehen —
-  das ist Scope von 002b (Encrypt-Stream landet erst dort);
-  Item §2.1 aus
-  [`offene-arbeitsfaeden.md`](../in-progress/offene-arbeitsfaeden.md)
-  bleibt offen bis 002b.
-
 ## Abgrenzung — NICHT in diesem Slice
 
 - **Kein PKCS#11-Adapter-Code.** Weder Session-Pool noch
@@ -251,6 +292,15 @@ hängen an 002b, nicht an 002a.
 - **Keine Proto-Erweiterung.** `EncryptResponse.container_header` /
   `container_trailer` und der `REVOKED → DESTROYED`-Enum-Rename
   kommen mit 002b.
+- **Kein Setzen von `MaxRecvMsgSize`** in `cmd/hsmdoc/main.go`.
+  Der `TODO(slice-002)`-Marker bleibt unangetastet; Item §2.1 aus
+  [`offene-arbeitsfaeden.md`](../in-progress/offene-arbeitsfaeden.md)
+  bleibt offen bis 002b (Encrypt-Stream landet erst dort).
+- **Kein Umbau der Coverage-Mechanik.** `gocovmerge`, Build-Tag-
+  Trennung Unit/Integration und CGO-pflichtige Coverage-Pfade
+  bleiben Slice-002b-Scope — 002a hält die bestehende
+  Docker-`coverage`-Stage (`CGO_ENABLED=0 go test ./...`)
+  unverändert. Jeder Eingriff hier wäre Scope-Creep.
 
 ## Geplante Slice-Folge danach
 
@@ -266,7 +316,17 @@ gelistet.
 
 - Direkter Implementierungs-/Akzeptanzbezug im Slice 002a:
   [Lastenheft `HSM-NFA-SEC-007`](../../../../spec/lastenheft.md)
-  (Distroless-nonroot bleibt erfüllt)
+  (Distroless-nonroot bleibt erfüllt),
+  [`HSM-NFA-SEC-008`](../../../../spec/lastenheft.md) (Pod-
+  Härtung bleibt durch Distroless-base + nonroot unverändert
+  erfüllt),
+  [`HSM-API-P11-001`](../../../../spec/lastenheft.md) (M1-Pflicht
+  PKCS#11-Toolchain — 002a stellt die Build-Voraussetzung).
+- Indirekter Bezug (002a bereitet vor, Erfüllung in 002b):
+  [`HSM-FA-HSM-001..003`](../../../../spec/lastenheft.md) — der
+  Vendor-Smoke gegen SoftHSM v2 + zweites OSS-Modul aus 002b
+  setzt das in 002a vorbereitete CI-Image und die ADR-0004-
+  Modulwahl voraus.
 - Direkter Implementierungs-/Akzeptanzbezug im Slice 002a
   (Teil-Erfüllung — Voll-Erfüllung in 002b):
   [Spezifikation `HSM-API-P11-002`](../../../../spec/spezifikation.md).
