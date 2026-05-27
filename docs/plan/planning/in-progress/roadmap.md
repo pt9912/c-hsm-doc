@@ -256,7 +256,7 @@ parallel arbeiten.
 | Slice | Titel                                              | Ort           | Status             | Letzter Touchpoint           |
 | ----- | -------------------------------------------------- | ------------- | ------------------ | ---------------------------- |
 | 001   | [gRPC-Skeleton](001-grpc-skeleton.md)              | `in-progress` | gates grün, DoD-05 erfüllt; Slice schließt mit M1-DoD-Erfüllung | Commit `dcc1758` (2026-05-27) |
-| 002   | PKCS#11-Adapter + Encrypt                          | _ungeschnitten_ | geplant — siehe Geplante Slice-Folge in [`001-grpc-skeleton.md`](001-grpc-skeleton.md) | —                            |
+| 002   | [PKCS#11-Adapter + Encrypt](../next/002-pkcs11-encrypt.md) | `next`        | Scope skizziert; wartet auf Slice-001-Closure und CI-SoftHSM-Setup; löst Open-Trigger 002 ein | Plan-Commit (2026-05-27)     |
 | 003   | Container-Codec + Decrypt                          | _ungeschnitten_ | geplant                                          | —                            |
 | 004   | Basis-Audit-Log mit Hash-Chain                     | _ungeschnitten_ | geplant                                          | —                            |
 | 005   | Helm-Chart + Kind-Smoke                            | _ungeschnitten_ | geplant; trägt Sub-Scope NetworkPolicy-Defaults aus [`offene-arbeitsfaeden.md`](offene-arbeitsfaeden.md) §5 | — |

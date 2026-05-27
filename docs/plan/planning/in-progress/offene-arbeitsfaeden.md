@@ -56,16 +56,15 @@ markiert (siehe Commits `9c4f59c` + `dcc1758`).
 
 ---
 
-## 2. TODO-Marker im Code (Slice-002/006-Scope)
+## 2. TODO-Marker im Code (Slice-006-Scope)
 
-### 2.1 `MaxRecvMsgSize` / Keepalive für gRPC-Server
+### 2.1 `MaxRecvMsgSize` / Keepalive für gRPC-Server — geroutet
 
-- **Zustand:** `cmd/hsmdoc/main.go:106-108` trägt
-  `// TODO(slice-002)`. Default-Recv-Cap (4 MiB) reicht für das
-  Skeleton, deckt aber `HSM-FA-CHUNK-008` (Stream-Chunks) nicht ab.
-- **Routing:** Slice 002 (PKCS#11 + Encrypt) — sobald
-  Encrypt-Stream-Chunks landen. Beim Anlegen des Slice-002-Plans
-  in den Scope-Abschnitt aufnehmen, hier streichen.
+- Geroutet in [`../next/002-pkcs11-encrypt.md`](../next/002-pkcs11-encrypt.md)
+  §gRPC-Adapter (Scope) und §Akzeptanzkriterien
+  (`TODO(slice-002)` aus `cmd/hsmdoc/main.go` muss mit dem Slice
+  beseitigt sein). Eintrag bleibt als Routing-Marker stehen, bis
+  Slice 002 nach `done/` migriert ist.
 
 ### 2.2 TLS-Material-Reload ohne Prozess-Restart
 
