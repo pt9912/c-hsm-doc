@@ -82,9 +82,11 @@ ENV COVERAGE_THRESHOLD=${COVERAGE_THRESHOLD}
 COPY . .
 # Generated code aus dem coverpkg ausschließen (internal/gen/**). Die
 # zugehörigen .pb.go-Dateien tragen "// Code generated ... DO NOT EDIT."
-# am Anfang; Coverage über sie ist nicht aussagekräftig.
+# am Anfang; Coverage über sie ist nicht aussagekräftig. Der Regex ist
+# am vollen Modulpfad geankert, damit ein zukünftiges Paket wie
+# `internal/dependency-generator/` nicht versehentlich mitgefiltert wird.
 RUN mkdir -p /out && \
-    COVERPKG=$(go list ./internal/... 2>/dev/null | grep -v '/internal/gen/' | tr '\n' ',' | sed 's/,$//') && \
+    COVERPKG=$(go list ./internal/... 2>/dev/null | grep -v '^github.com/pt9912/c-hsm-doc/internal/gen/' | tr '\n' ',' | sed 's/,$//') && \
     if [ -z "$COVERPKG" ]; then \
         echo "coverage: keine Produktiv-Pakete in ./internal/... — bootstrap mode"; \
         : > /out/coverage.out; \

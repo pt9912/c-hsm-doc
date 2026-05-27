@@ -11,15 +11,17 @@
 #
 # Schicht-Matrix (hexagonale Architektur, HSM-ARCH-001):
 #
-#   hexagon/domain/        keine internen Imports, keine externen I/O-Libs
+#   hexagon/domain/        keine internen Imports, keine I/O- oder Transport-Libs
 #   hexagon/application/   MAY  hexagon/domain, hexagon/port
-#                          NOT  adapter, gen
+#                          NOT  adapter, gen, Transport-/IO-Libs
 #   hexagon/port/**        MAY  hexagon/domain
 #                          NOT  hexagon/application, adapter, gen
 #   adapter/driving/**     MAY  hexagon/port/driving, hexagon/domain, gen
-#                          NOT  adapter/driven, hexagon/application impl
+#                          NOT  adapter/driven
 #   adapter/driven/**      MAY  hexagon/port/driven, hexagon/domain
 #                          NOT  adapter/driving, gen
+#   internal/config/**     Leaf-Paket: lädt ENV, hat keine Adapter-/
+#                          Application-/Domain-Abhängigkeit (nur stdlib).
 #   cmd/**                 MAY  alles (Composition Root)
 #   internal/gen/**        unbeschränkt (generierter Code, "DO NOT EDIT")
 #
@@ -46,7 +48,11 @@ linters:
   settings:
     depguard:
       rules:
-        # 1) Domain darf keine projekt-internen Abhängigkeiten haben.
+        # 1) Domain darf keine projekt-internen Abhängigkeiten haben und
+        #    keine stdlib-Pakete, die Netz-/Prozess-/DB-I/O einführen.
+        #    Rein-rechnerische crypto/-Pakete (aes, sha256, hmac) sind
+        #    erlaubt, weil Container-Format und Chunk-Math im Domain
+        #    leben dürfen.
         domain-purity:
           list-mode: lax
           files:
@@ -60,8 +66,21 @@ linters:
               desc: "hexagon/domain darf keine Ports importieren (HSM-ARCH-001)."
             - pkg: github.com/pt9912/c-hsm-doc/internal/gen
               desc: "hexagon/domain darf keinen generierten Code importieren."
+            - pkg: net
+              desc: "hexagon/domain darf kein Netz-I/O treiben — gehört in adapter/driving oder driven."
+            - pkg: net/http
+              desc: "hexagon/domain darf kein HTTP — gehört in adapter."
+            - pkg: net/url
+              desc: "hexagon/domain darf keine URL-Auflösung — gehört in adapter."
+            - pkg: crypto/tls
+              desc: "TLS ist Transport — gehört in adapter/driving."
+            - pkg: os/exec
+              desc: "hexagon/domain darf keine Prozesse starten."
+            - pkg: database/sql
+              desc: "hexagon/domain darf keine DB-Anbindung — gehört in adapter/driven."
 
-        # 2) Application darf Ports und Domain nutzen, aber keine Adapter.
+        # 2) Application darf Ports und Domain nutzen, aber keine Adapter
+        #    und keine Transport-/IO-Libs direkt anfassen.
         application-allows-ports-only:
           list-mode: lax
           files:
@@ -71,9 +90,19 @@ linters:
               desc: "hexagon/application darf keine Adapter direkt importieren (HSM-ARCH-001); nur über Ports."
             - pkg: github.com/pt9912/c-hsm-doc/internal/gen
               desc: "hexagon/application darf keinen generierten Code direkt importieren; Mapping gehört in Adapter."
+            - pkg: net/http
+              desc: "Application darf keinen HTTP-Client/Server treiben — gehört in Adapter."
+            - pkg: crypto/tls
+              desc: "TLS ist Transport — Application sieht nur Ports."
+            - pkg: google.golang.org/grpc
+              desc: "gRPC ist Transport — Application sieht nur Ports."
+            - pkg: github.com/miekg/pkcs11
+              desc: "PKCS#11 ist Driven-Adapter — Application sieht nur Ports."
+            - pkg: database/sql
+              desc: "DB ist Driven-Adapter — Application sieht nur Ports."
 
         # 3) Ports definieren Interfaces; sie dürfen keine Adapter oder
-        #    Application-Logik importieren und nicht zueinander kreuzen.
+        #    Application-Logik importieren.
         ports-are-interfaces:
           list-mode: lax
           files:
@@ -83,6 +112,8 @@ linters:
               desc: "Ports dürfen keine Adapter importieren (HSM-ARCH-001)."
             - pkg: github.com/pt9912/c-hsm-doc/internal/hexagon/application
               desc: "Ports dürfen keine Use-Cases importieren (HSM-ARCH-001)."
+            - pkg: github.com/pt9912/c-hsm-doc/internal/gen
+              desc: "Ports dürfen keinen generierten Code importieren."
 
         # 4) Driving-Adapter dürfen nicht direkt Driven-Adapter importieren
         #    (Cross-Adapter-Kopplung verletzt die Trennung).
@@ -107,13 +138,29 @@ linters:
             - pkg: github.com/pt9912/c-hsm-doc/internal/gen
               desc: "Wire-Format-Mapping gehört in driving, nicht in driven."
 
+        # 6) internal/config ist Leaf: ENV-/File-Loader. Darf keine
+        #    Adapter, keine Application, keine Domain importieren,
+        #    damit es nicht heimlich Geschäftslogik aufsaugt.
+        config-is-leaf:
+          list-mode: lax
+          files:
+            - "**/internal/config/**"
+          deny:
+            - pkg: github.com/pt9912/c-hsm-doc/internal/adapter
+              desc: "config ist ein Leaf-Loader — keine Adapter-Imports."
+            - pkg: github.com/pt9912/c-hsm-doc/internal/hexagon
+              desc: "config ist ein Leaf-Loader — keine Domain-/Application-/Port-Imports."
+            - pkg: github.com/pt9912/c-hsm-doc/internal/gen
+              desc: "config ist ein Leaf-Loader — keine Generated-Code-Imports."
+
     gosec:
-      # G104 (errcheck-Duplikat) und G304 (File-Inclusion mit
-      # konfigurierten Pfaden) — Letzteres trifft sonst auf jeden
-      # legitimen Datei-Open-Aufruf in config.go / TLS-Load.
+      # G104 ist ein errcheck-Duplikat (errcheck ist eigener Standard-
+      # Linter). G304 (File-Inclusion via variable) bleibt aktiv: die
+      # legitimen Callsites tragen //nolint:gosec G304 mit Begründung
+      # auf Konfig-Validierung (HSM-OPS-CFG-002); damit fängt der Linter
+      # neue Pfad-Quellen in Slice 002+ ein.
       excludes:
         - G104
-        - G304
 
     revive:
       rules:

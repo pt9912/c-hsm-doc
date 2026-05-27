@@ -126,15 +126,18 @@ proto-gen: ## (Re)generate Go code from spec/proto/**/*.proto into internal/gen/
 	@echo "[proto-gen] regenerated internal/gen/ from spec/proto/"
 
 proto-check: ## Fail if checked-in generated code drifts from spec/proto/.
-	@cp -a internal/gen /tmp/c-hsm-doc-proto-snapshot
-	@$(MAKE) --no-print-directory proto-gen >/dev/null
-	@if ! diff -r internal/gen /tmp/c-hsm-doc-proto-snapshot >/dev/null 2>&1 ; then \
+	@snapshot="$$(mktemp -d -t c-hsm-doc-proto-snapshot-XXXXXX)" ; \
+	cp -a internal/gen "$$snapshot/gen" ; \
+	$(MAKE) --no-print-directory proto-gen >/dev/null ; \
+	if ! diff -r internal/gen "$$snapshot/gen" >/dev/null 2>&1 ; then \
 	    echo "[proto-check] internal/gen/ is out of sync with spec/proto/ — run 'make proto-gen' and commit." ; \
-	    rm -rf /tmp/c-hsm-doc-proto-snapshot ; \
+	    rm -rf internal/gen ; \
+	    cp -a "$$snapshot/gen" internal/gen ; \
+	    rm -rf "$$snapshot" ; \
 	    exit 1 ; \
-	fi
-	@rm -rf /tmp/c-hsm-doc-proto-snapshot
-	@echo "[proto-check] internal/gen/ matches spec/proto/"
+	fi ; \
+	rm -rf "$$snapshot" ; \
+	echo "[proto-check] internal/gen/ matches spec/proto/"
 
 # ---- aggregators -----------------------------------------------------------
 
