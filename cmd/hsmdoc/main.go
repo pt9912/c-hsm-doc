@@ -87,7 +87,9 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	healthLn, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.HealthPort))
 	if err != nil {
-		_ = grpcLn.Close()
+		if closeErr := grpcLn.Close(); closeErr != nil {
+			logger.Warn("failed to close grpc listener after health-listen error", "error", closeErr)
+		}
 		return fmt.Errorf("listen health :%d: %w", cfg.HealthPort, err)
 	}
 
@@ -104,13 +106,18 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 }
 
 func newGRPCServer(tlsCfg *tls.Config) *grpc.Server {
+	// TODO(slice-002): MaxRecvMsgSize/Keepalive konfigurieren, sobald
+	// Encrypt-Stream-Chunks landen. Default-Recv-Cap (4 MiB) reicht für
+	// das Skeleton, deckt aber HSM-FA-CHUNK-008 nicht ab.
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
 	chsmdocv1.RegisterHsmDocServiceServer(srv, grpcadapter.NewServer())
 	return srv
 }
 
 func loadServerTLS(certPath, keyPath string) (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	// TODO(slice-006): TLS-Material-Reload ohne Prozess-Restart, sobald
+	// mTLS-Identitäts-Material rotiert wird (HSM-API-GRPC-003).
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath) //nolint:gosec // G304: Pfade kommen aus validierter Konfig (HSM-OPS-CFG-002).
 	if err != nil {
 		return nil, fmt.Errorf("load TLS material: %w", err)
 	}
@@ -128,44 +135,61 @@ func serveAll(
 	healthLn net.Listener,
 	logger *slog.Logger,
 ) error {
+	// runCtx kaskadiert beide Shutdown-Pfade in einen einzigen Auslöser:
+	// bei Signal-Empfang ODER bei Goroutine-Fehler werden Health- und
+	// gRPC-Listener gemeinsam abgebaut. Ohne den abgeleiteten Cancel
+	// würde ein gRPC-Goroutine-Fehler den Health-Server weiterlaufen
+	// lassen, weil sein eigener ctx noch nicht abgebrochen ist.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
+	sendErr := func(err error) {
+		if err == nil {
+			return
+		}
+		select {
+		case errs <- err:
+		default:
+		}
+	}
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		if err := grpcSrv.Serve(grpcLn); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-			errs <- fmt.Errorf("grpc serve: %w", err)
+			sendErr(fmt.Errorf("grpc serve: %w", err))
 		}
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := healthadapter.Run(ctx, healthSrv, healthLn); err != nil {
-			errs <- err
+		if err := healthadapter.Run(runCtx, healthSrv, healthLn); err != nil {
+			sendErr(err)
 		}
 	}()
 
 	select {
-	case <-ctx.Done():
-		logger.Info("shutdown signal received", "reason", ctx.Err())
+	case <-runCtx.Done():
+		logger.Info("shutdown signal received", "reason", runCtx.Err())
 	case err := <-errs:
 		logger.Error("server goroutine failed", "error", err)
-		// Falls noch nicht beendet, stoppen wir den gRPC-Server, damit
-		// die Health-Goroutine ihre eigene Shutdown-Sequenz laufen kann.
+		cancel() // bricht die Health-Goroutine
 	}
 
 	shutdownGRPC(grpcSrv, logger)
-
 	wg.Wait()
 	close(errs)
+
+	var collected []error
 	for err := range errs {
 		if err != nil {
-			return err
+			collected = append(collected, err)
 		}
 	}
-	return nil
+	return errors.Join(collected...)
 }
 
 func shutdownGRPC(srv *grpc.Server, logger *slog.Logger) {
@@ -174,11 +198,14 @@ func shutdownGRPC(srv *grpc.Server, logger *slog.Logger) {
 		srv.GracefulStop()
 		close(done)
 	}()
+	t := time.NewTimer(10 * time.Second)
+	defer t.Stop()
 	select {
 	case <-done:
 		return
-	case <-time.After(10 * time.Second):
+	case <-t.C:
 		logger.Warn("graceful shutdown timed out, forcing stop")
 		srv.Stop()
+		<-done
 	}
 }

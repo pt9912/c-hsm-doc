@@ -29,6 +29,8 @@ func NewServer(addr string) *http.Server {
 		Addr:              addr,
 		Handler:           NewMux(),
 		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       30 * time.Second,
 	}
 }
 
@@ -49,10 +51,16 @@ func Run(ctx context.Context, srv *http.Server, ln net.Listener) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("health server shutdown: %w", err)
+		shutdownErr := srv.Shutdown(shutdownCtx)
+		// Shutdown schließt den Listener; die Serve-Goroutine kehrt
+		// daraufhin zurück und sendet entweder nil oder ihren Fehler.
+		// Wir warten darauf, damit der Caller (serveAll) keinen
+		// Goroutine-Leak akkumuliert.
+		serveErr := <-errCh
+		if shutdownErr != nil {
+			return errors.Join(fmt.Errorf("health server shutdown: %w", shutdownErr), serveErr)
 		}
-		return nil
+		return serveErr
 	case err := <-errCh:
 		return err
 	}

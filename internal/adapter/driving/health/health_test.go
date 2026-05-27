@@ -2,9 +2,11 @@ package health
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -19,13 +21,13 @@ func TestMuxLivenessAndReadiness(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewRequest: %v", err)
 			}
-			rec := &recorder{header: make(http.Header)}
+			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
-			if rec.code != http.StatusOK {
-				t.Errorf("%s status = %d, want 200", path, rec.code)
+			if rec.Code != http.StatusOK {
+				t.Errorf("%s status = %d, want 200", path, rec.Code)
 			}
-			if !strings.Contains(rec.body.String(), "SERVING") {
-				t.Errorf("%s body = %q, want substring SERVING", path, rec.body.String())
+			if !strings.Contains(rec.Body.String(), "SERVING") {
+				t.Errorf("%s body = %q, want substring SERVING", path, rec.Body.String())
 			}
 		})
 	}
@@ -66,37 +68,27 @@ func TestRunStartsAndShutsDownOnContextCancel(t *testing.T) {
 func waitForOK(url string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	client := &http.Client{Timeout: 200 * time.Millisecond}
+	var lastStatus int
+	var lastErr error
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(url)
-		if err == nil {
+		if err != nil {
+			lastErr = err
+		} else {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
+			lastStatus = resp.StatusCode
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+	if lastStatus != 0 {
+		return fmt.Errorf("waitForOK %s: last status = %d", url, lastStatus)
+	}
+	if lastErr != nil {
+		return fmt.Errorf("waitForOK %s: last error = %w", url, lastErr)
+	}
 	return context.DeadlineExceeded
-}
-
-// recorder ist ein minimal-http.ResponseWriter ohne externe Abhängigkeit
-// auf net/http/httptest.
-type recorder struct {
-	header http.Header
-	code   int
-	body   strings.Builder
-}
-
-func (r *recorder) Header() http.Header { return r.header }
-func (r *recorder) WriteHeader(code int) {
-	if r.code == 0 {
-		r.code = code
-	}
-}
-func (r *recorder) Write(p []byte) (int, error) {
-	if r.code == 0 {
-		r.code = http.StatusOK
-	}
-	return r.body.Write(p)
 }

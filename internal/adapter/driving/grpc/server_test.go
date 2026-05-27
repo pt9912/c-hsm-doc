@@ -21,6 +21,12 @@ const bufSize = 1024 * 1024
 
 // dialBufconn baut einen in-process gRPC-Client gegen einen
 // bufconn-Listener. Vermeidet echte TCP-/TLS-Sockets im Unit-Test.
+//
+// Die Cleanup-Reihenfolge folgt der gRPC-Lifecycle-Empfehlung:
+// GracefulStop → conn.Close → lis.Close. Außerdem wartet sie auf
+// das Return der Serve-Goroutine, damit kein Goroutine-Leak
+// zwischen Tests akkumuliert und go test -race nicht in der
+// Test-Helper-Logik flakt.
 func dialBufconn(t *testing.T) (chsmdocv1.HsmDocServiceClient, func()) {
 	t.Helper()
 
@@ -28,7 +34,9 @@ func dialBufconn(t *testing.T) (chsmdocv1.HsmDocServiceClient, func()) {
 	srv := grpc.NewServer()
 	chsmdocv1.RegisterHsmDocServiceServer(srv, NewServer())
 
+	serveDone := make(chan struct{})
 	go func() {
+		defer close(serveDone)
 		_ = srv.Serve(lis)
 	}()
 
@@ -46,8 +54,9 @@ func dialBufconn(t *testing.T) (chsmdocv1.HsmDocServiceClient, func()) {
 	client := chsmdocv1.NewHsmDocServiceClient(conn)
 
 	cleanup := func() {
-		_ = conn.Close()
 		srv.GracefulStop()
+		<-serveDone
+		_ = conn.Close()
 		_ = lis.Close()
 	}
 	return client, cleanup
@@ -99,6 +108,11 @@ func TestEncryptUnimplemented(t *testing.T) {
 	}); err != nil && !errors.Is(err, io.EOF) {
 		t.Fatalf("Encrypt send: %v", err)
 	}
+	// Canonical client-side close — Slice 002 wird Streams einziehen,
+	// die CloseSend tatsächlich brauchen.
+	if err := stream.CloseSend(); err != nil {
+		t.Fatalf("Encrypt CloseSend: %v", err)
+	}
 	_, err = stream.Recv()
 	assertUnimplemented(t, "Encrypt", err)
 }
@@ -115,6 +129,9 @@ func TestDecryptUnimplemented(t *testing.T) {
 		Body: &chsmdocv1.DecryptRequest_Header{Header: &chsmdocv1.DecryptHeader{DocId: "d", TenantId: "t"}},
 	}); err != nil && !errors.Is(err, io.EOF) {
 		t.Fatalf("Decrypt send: %v", err)
+	}
+	if err := stream.CloseSend(); err != nil {
+		t.Fatalf("Decrypt CloseSend: %v", err)
 	}
 	_, err = stream.Recv()
 	assertUnimplemented(t, "Decrypt", err)

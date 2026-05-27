@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Defaults für Slice 001 (siehe docs/plan/planning/in-progress/001-grpc-skeleton.md).
@@ -36,24 +37,24 @@ type Config struct {
 }
 
 // Load liest die Konfiguration aus dem Environment.
-// Fehlende Pflichtwerte oder ungültige Ports führen zu einem
-// Start-Abbruch gemäß HSM-OPS-CFG-002.
+// Fehlende Pflichtwerte, ungültige Ports oder fehlende TLS-Dateien
+// führen zu einem Start-Abbruch gemäß HSM-OPS-CFG-002.
 func Load() (Config, error) {
 	cfg := Config{
 		GRPCPort:    defaultGRPCPort,
 		HealthPort:  defaultHealthPort,
-		TLSCertPath: os.Getenv("HSMDOC_TLS_CERT"),
-		TLSKeyPath:  os.Getenv("HSMDOC_TLS_KEY"),
+		TLSCertPath: strings.TrimSpace(os.Getenv("HSMDOC_TLS_CERT")),
+		TLSKeyPath:  strings.TrimSpace(os.Getenv("HSMDOC_TLS_KEY")),
 	}
 
-	if v := os.Getenv("HSMDOC_GRPC_PORT"); v != "" {
+	if v := strings.TrimSpace(os.Getenv("HSMDOC_GRPC_PORT")); v != "" {
 		p, err := parsePort("HSMDOC_GRPC_PORT", v)
 		if err != nil {
 			return Config{}, err
 		}
 		cfg.GRPCPort = p
 	}
-	if v := os.Getenv("HSMDOC_HEALTH_PORT"); v != "" {
+	if v := strings.TrimSpace(os.Getenv("HSMDOC_HEALTH_PORT")); v != "" {
 		p, err := parsePort("HSMDOC_HEALTH_PORT", v)
 		if err != nil {
 			return Config{}, err
@@ -70,8 +71,25 @@ func Load() (Config, error) {
 	if cfg.TLSKeyPath == "" {
 		return Config{}, errors.New("config: HSMDOC_TLS_KEY is required (TLS 1.3, HSM-API-GRPC-002)")
 	}
+	if err := assertReadable("HSMDOC_TLS_CERT", cfg.TLSCertPath); err != nil {
+		return Config{}, err
+	}
+	if err := assertReadable("HSMDOC_TLS_KEY", cfg.TLSKeyPath); err != nil {
+		return Config{}, err
+	}
 
 	return cfg, nil
+}
+
+func assertReadable(name, path string) error {
+	info, err := os.Stat(path) //nolint:gosec // G304: Pfad ist gerade die zu validierende Konfig-Eingabe (HSM-OPS-CFG-002).
+	if err != nil {
+		return fmt.Errorf("config: %s = %q is not accessible: %w", name, path, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("config: %s = %q is a directory, expected a regular file", name, path)
+	}
+	return nil
 }
 
 func parsePort(name, v string) (int, error) {
