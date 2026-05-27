@@ -162,8 +162,28 @@ Externe Senken:
 - Verankerungssenke (RFC-3161 TSA / Sigstore Rekor / zweiter Log-Service)
 ```
 
-Bezug: `HSM-ENV-001..003`, `HSM-NFA-SEC-007..008`, `HSM-NFA-HA-001..002`
-(Lastenheft); `HSM-FA-AUDIT-010..011` (Spezifikation).
+Das Diagramm zeigt repräsentativ **Modus 2** aus `HSM-ENV-004`
+(Kubernetes ohne Service Mesh). Die übrigen drei Betriebsmodi
+weichen nur in der Außenhülle ab, die Innensicht des Service
+(Ports, Adapter, mTLS-Material, PKCS#11-Pfad zum HSM, Audit-Volume)
+bleibt identisch:
+
+- **Modus 1** (Bare-Container, Docker/Podman/containerd): kein
+  Namespace, kein Deployment, kein Helm-Chart. Container wird per
+  `docker run`/`podman run` mit gemounteten Volumes (`/audit`,
+  `/tls`) und Env-/Secret-File-Konfiguration gestartet (siehe
+  `HSM-MVP-005` Akzeptanz (a)).
+- **Modus 3** (K8s + L4-Passthrough-Mesh, z. B. Istio Ambient
+  ztunnel-only): zusätzlicher L4-Proxy zwischen Caller und
+  Service-Pod, mTLS terminiert weiterhin am Server.
+- **Modus 4** (K8s + L7-mTLS-Mesh, z. B. Istio Sidecar mit
+  `PeerAuthentication STRICT`): zusätzlicher Sidecar-Container im
+  Service-Pod terminiert TLS; Identität läuft über Header und
+  Peer-Allowlist (siehe `HSM-API-GRPC-006..008`).
+
+Bezug: `HSM-ENV-001..004`, `HSM-NFA-SEC-007..008`, `HSM-NFA-HA-001..002`
+(Lastenheft); `HSM-FA-AUDIT-010..011` (Spezifikation);
+[ADR 0003](../docs/plan/adr/0003-plattform-und-mesh-neutralitaet.md).
 
 ---
 
@@ -191,7 +211,18 @@ TRUSTED                                  | UNTRUSTED
                   +----------------+     |
 ```
 
-Bezug: `HSM-PUE-003`, `HSM-THREAT-001..010` (Lastenheft).
+In **Modus 4** (`HSM-ENV-004`) sitzt der mTLS-terminierende
+Mesh-Sidecar innerhalb derselben Vertrauensgrenze wie der
+Service-Pod und reicht die Caller-Identität als Header weiter; die
+Peer-Allowlist aus `HSM-API-GRPC-007` ist der Anker, der die
+Sidecar-Injektions-Bedrohung (`HSM-THREAT-002`) auf das vom Mesh
+selbst gelieferte Bedrohungsmodell beschränkt. In den Modi 1–3
+bleibt das Diagramm unverändert: mTLS terminiert am Service-Pod
+selbst.
+
+Bezug: `HSM-PUE-003`, `HSM-THREAT-001..010` (Lastenheft);
+`HSM-API-GRPC-006..008` (Spezifikation);
+[ADR 0003](../docs/plan/adr/0003-plattform-und-mesh-neutralitaet.md).
 
 ---
 
