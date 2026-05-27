@@ -69,7 +69,7 @@ der den DoD-Punkt erfüllt.
 | `[ ]` | `M1-DoD-02` | Betriebsabnahme (Helm-Chart auf Kind-Cluster) erfüllt        | Helm-Smoke-Test                   | `HSM-ACCEPT-005`                                   |
 | `[ ]` | `M1-DoD-03` | 1-GiB-Demo: Encrypt-Decrypt mit identischer SHA-256-Summe    | `demo/encrypt-decrypt.sh`         | `HSM-MVP-001`                                      |
 | `[ ]` | `M1-DoD-04` | Java-Beispielprogramm läuft gegen Demo-Service               | `examples/`-Modul + Live-Lauf     | `HSM-MVP-006`, `HSM-API-JAVA-001`                  |
-| `[ ]` | `M1-DoD-05` | `make ci` grün mit `internal/`-Coverage ≥ 80 % (kein Bootstrap) | CI-Job-Status                     | ADR 0002 §2.5                                      |
+| `[x]` | `M1-DoD-05` | `make ci` grün mit `internal/`-Coverage ≥ 80 % (kein Bootstrap) | CI-Job-Status                     | ADR 0002 §2.5                                      |
 | `[x]` | `M1-DoD-06` | Open-Trigger 001 (`go.sum` Strict-Mode) nach `done/` migriert | Repo-State                        | [`done/001`](../done/001-gosum-strict-mode.md)     |
 | `[ ]` | `M1-DoD-07` | Open-Trigger 002 (CGO-Base-Switch) nach `done/` migriert      | Repo-State                        | [`open/002`](../open/002-distroless-base-fuer-cgo.md) |
 
@@ -239,13 +239,26 @@ wird er aus der Liste gestrichen.
 
 ## Status der Roadmap
 
-| Meilenstein | Status                                                    |
-| ----------- | --------------------------------------------------------- |
-| M1          | Einstiegs-Slice 001-grpc-skeleton im Bestand von `next/`. |
-| M2          | wartet auf M1-Closure.                                    |
-| M3          | wartet auf M2-Closure und Verfügbarkeit Produktions-HSM.  |
-| M4          | wartet auf M3-Closure.                                    |
+| Meilenstein | Status                                                                          |
+| ----------- | ------------------------------------------------------------------------------- |
+| M1          | Slice 001 (gRPC-Skeleton) in `in-progress/`, gates grün; Folge-Slices in Planung. |
+| M2          | wartet auf M1-Closure; Slice 006 (Identity-Source) in `next/` vorbereitet.       |
+| M3          | wartet auf M2-Closure und Verfügbarkeit Produktions-HSM.                        |
+| M4          | wartet auf M3-Closure.                                                          |
 
-Sobald der erste Slice von `next/` nach `in-progress/` wandert, wird
-dieser Abschnitt um eine Slice-Tabelle ergänzt
-(Slice → Status → Owner → letzter Touchpoint).
+### Slice-Tabelle
+
+Lebende Übersicht der Slice-Pläne über alle Verzeichnis-Zustände
+(`next/`, `in-progress/`, `done/`). Owner heute generisch
+(Repo-Maintainer); wird konkretisiert, sobald mehrere Mitwirkende
+parallel arbeiten.
+
+| Slice | Titel                                              | Ort           | Status             | Letzter Touchpoint           |
+| ----- | -------------------------------------------------- | ------------- | ------------------ | ---------------------------- |
+| 001   | [gRPC-Skeleton](001-grpc-skeleton.md)              | `in-progress` | gates grün, DoD-05 erfüllt; Slice schließt mit M1-DoD-Erfüllung | Commit `dcc1758` (2026-05-27) |
+| 002   | PKCS#11-Adapter + Encrypt                          | _ungeschnitten_ | geplant — siehe Geplante Slice-Folge in [`001-grpc-skeleton.md`](001-grpc-skeleton.md) | —                            |
+| 003   | Container-Codec + Decrypt                          | _ungeschnitten_ | geplant                                          | —                            |
+| 004   | Basis-Audit-Log mit Hash-Chain                     | _ungeschnitten_ | geplant                                          | —                            |
+| 005   | Helm-Chart + Kind-Smoke                            | _ungeschnitten_ | geplant; trägt Sub-Scope NetworkPolicy-Defaults aus [`offene-arbeitsfaeden.md`](offene-arbeitsfaeden.md) §5 | — |
+| 006   | [Identity-Source und Peer-Allowlist](../next/006-identity-source-und-peer-allowlist.md) | `next` | wartet auf Slices 001+004; setzt `HSM-API-GRPC-006..008` um | Commit `9de091d` (2026-05-27) |
+| 007–011 | M2-DoDs 02..05, 07–09                            | _ungeschnitten_ | Schneidung skizziert in [`offene-arbeitsfaeden.md`](offene-arbeitsfaeden.md) §3 | — |
