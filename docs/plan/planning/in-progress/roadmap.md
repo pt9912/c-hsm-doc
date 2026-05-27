@@ -32,8 +32,9 @@ Java-Client ohne JNI.
   zulässig, mehrstufige Quotas folgen in M4).
 - Schnittstellen: `HSM-API-JAVA-001`, `HSM-API-GRPC-001..003`,
   `HSM-API-P11-001`, `HSM-API-CFG-001..002`.
-- Umgebung: `HSM-ENV-001..003` (Container, Kubernetes, lokale SoftHSM-
-  Dev-Umgebung; bereits durch ADR 0002 und Helm-Chart-Stub adressiert).
+- Umgebung: `HSM-ENV-001..004` (Container, Kubernetes, lokale SoftHSM-
+  Dev-Umgebung, Plattform-Neutralität gegen Mesh-Varianten; bereits durch
+  ADR 0002 und Helm-Chart-Stub adressiert).
 - NFA: `HSM-NFA-MEM-001..002`, `HSM-NFA-OPS-001..003`,
   `HSM-NFA-PORT-001`, `HSM-NFA-PORT-003`, `HSM-NFA-SEC-001`,
   `HSM-NFA-SEC-003`, `HSM-NFA-SEC-007..008`.

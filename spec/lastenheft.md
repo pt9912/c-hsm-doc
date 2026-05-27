@@ -144,7 +144,10 @@ Der Dienst MUSS in Umgebungen einsetzbar sein, in denen Dokumente aus regulatori
 
 Die primäre Betriebsumgebung MUSS sein:
 
-- Linux x86_64 als Container in Kubernetes (≥ 1.28),
+- Linux x86_64 als Container (OCI-Image), lauffähig sowohl als
+  Bare-Container (Docker/Podman/containerd) als auch in
+  Kubernetes (≥ 1.28) — siehe `HSM-ENV-004` für die vier
+  unterstützten Betriebsmodi,
 - ein PKCS#11-fähiges HSM (Hardware oder SoftHSM v2),
 - TLS-1.3-fähige Netzwerkinfrastruktur zwischen Java-Client und Go-Service.
 
@@ -237,9 +240,9 @@ Akzeptanz: Manipulation an einem bestehenden Eintrag wird durch eine Integrität
 
 ### HSM-MVP-005 – Containerisierte Auslieferung
 
-Der MVP MUSS als Container-Image mit Helm-Chart auslieferbar sein und in Kubernetes laufen.
+Der MVP MUSS als Container-Image auslieferbar sein und in allen Modi aus `HSM-ENV-004` lauffähig sein. Ein Helm-Chart MUSS für die Kubernetes-Modi bereitstehen; für den Bare-Container-Modus MUSS eine dokumentierte `docker run`- oder `podman run`-Aufrufsequenz vorliegen.
 
-Akzeptanz: `helm install` auf einem lokalen Kind-Cluster startet den Service erfolgreich; Liveness- und Readiness-Probes sind grün; eine Demo-Verschlüsselung über `port-forward` läuft durch.
+Akzeptanz: (a) `docker run` (bzw. `podman run`) startet den Service erfolgreich gegen SoftHSM; Liveness- und Readiness-Endpoints sind über Port-Mapping erreichbar und grün; eine Demo-Verschlüsselung läuft durch. (b) `helm install` auf einem lokalen Kind-Cluster startet den Service erfolgreich; Liveness- und Readiness-Probes sind grün; eine Demo-Verschlüsselung über `port-forward` läuft durch.
 
 ### HSM-MVP-006 – Java-Client ohne JNI
 
@@ -482,7 +485,7 @@ Konkrete PKCS#11-Returncode-Tabelle, Circuit-Breaker-Parameter, Reconnect-Backof
 
 `/healthz` (Liveness) DARF NICHT auf HSM-Fehler reagieren, solange der Service-Prozess selbst korrekt arbeitet. HSM-Ausfälle MÜSSEN ausschließlich auf Readiness wirken.
 
-Akzeptanz: Ein simulierter HSM-Ausfall lässt `/healthz` grün und `/readyz` rot; Kubernetes restartet den Pod im Test nicht.
+Akzeptanz: Ein simulierter HSM-Ausfall lässt `/healthz` grün und `/readyz` rot; ein die Endpunkte konsumierender Orchestrator (Kubernetes-Probes, Docker-Healthcheck, externer Watchdog) restartet den Container im Test nicht.
 
 ---
 
@@ -757,7 +760,7 @@ Der Service MUSS als Container-Image ausgeliefert werden.
 
 ### HSM-ENV-002 – Kubernetes
 
-Das Deployment MUSS Kubernetes-kompatibel sein; ein Helm-Chart MUSS im Repository liegen.
+Das Deployment MUSS Kubernetes-kompatibel sein; ein Helm-Chart MUSS im Repository liegen. Kubernetes ist einer von mehreren unterstützten Betriebsmodi (siehe `HSM-ENV-004`); die Kubernetes-Kompatibilität ist eine Auslieferungseigenschaft und DARF KEINE Voraussetzung für die funktionalen und sicherheitsrelevanten Eigenschaften des Service sein.
 
 ### HSM-ENV-003 – Lokale Entwicklung
 
@@ -964,7 +967,7 @@ Audit-Verifikationstool meldet Manipulation an einem geänderten Audit-Eintrag; 
 
 ### HSM-ACCEPT-005 – Betriebsabnahme
 
-Helm-Chart deployed erfolgreich auf einem Kind-Cluster; Liveness, Readiness und Startup-Probes sind grün; Prometheus-Endpoint liefert die Pflichtmetriken.
+In **Modus 1** (Bare-Container, `HSM-ENV-004`) startet der Service über `docker run`/`podman run`; Liveness, Readiness und Startup sind über die HTTP-Endpoints grün; Prometheus-Endpoint liefert die Pflichtmetriken. In **Modus 2** (Kubernetes ohne Mesh) deployed das Helm-Chart erfolgreich auf einem Kind-Cluster; Liveness-, Readiness- und Startup-Probes sind grün; Prometheus-Endpoint liefert die Pflichtmetriken.
 
 ### HSM-ACCEPT-006 – Compliance-Abnahme
 
