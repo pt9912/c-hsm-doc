@@ -70,7 +70,7 @@ der den DoD-Punkt erfüllt.
 | `[ ]` | `M1-DoD-03` | 1-GiB-Demo: Encrypt-Decrypt mit identischer SHA-256-Summe    | `demo/encrypt-decrypt.sh`         | `HSM-MVP-001`                                      |
 | `[ ]` | `M1-DoD-04` | Java-Beispielprogramm läuft gegen Demo-Service               | `examples/`-Modul + Live-Lauf     | `HSM-MVP-006`, `HSM-API-JAVA-001`                  |
 | `[ ]` | `M1-DoD-05` | `make ci` grün mit `internal/`-Coverage ≥ 80 % (kein Bootstrap) | CI-Job-Status                     | ADR 0002 §2.5                                      |
-| `[ ]` | `M1-DoD-06` | Open-Trigger 001 (`go.sum` Strict-Mode) nach `done/` migriert | Repo-State                        | [`open/001`](../open/001-gosum-strict-mode.md)     |
+| `[x]` | `M1-DoD-06` | Open-Trigger 001 (`go.sum` Strict-Mode) nach `done/` migriert | Repo-State                        | [`done/001`](../done/001-gosum-strict-mode.md)     |
 | `[ ]` | `M1-DoD-07` | Open-Trigger 002 (CGO-Base-Switch) nach `done/` migriert      | Repo-State                        | [`open/002`](../open/002-distroless-base-fuer-cgo.md) |
 
 **Verifikationspfad:** Integrationstests in CI gegen SoftHSM, Helm-
@@ -81,13 +81,14 @@ Smoke-Test gegen Kind, Maven-Build-Analyse für Java-Client.
 
 ### Einstiegspunkt M1
 
-Der erste M1-Slice ist als
-[`next/001-grpc-skeleton.md`](../next/001-grpc-skeleton.md) hinterlegt
-(gRPC-Skeleton mit allen vier Service-Methoden als `UNIMPLEMENTED`-
-Stubs, TLS 1.3, Health-/Ready-Endpoints, 12-Factor-Konfiguration). Er
-aktiviert Open-Trigger 001 (`go.sum` Strict-Mode) durch die ersten
-echten Imports. Geplante Folge-Slices und Aktivierungspfade siehe
-dort.
+Der erste M1-Slice läuft als
+[`in-progress/001-grpc-skeleton.md`](001-grpc-skeleton.md) (gRPC-
+Skeleton mit allen vier Service-Methoden als `UNIMPLEMENTED`-Stubs,
+TLS 1.3, Health-/Ready-Endpoints, 12-Factor-Konfiguration). Open-
+Trigger 001 (`go.sum` Strict-Mode) ist mit diesem Slice eingelöst und
+nach
+[`done/001-gosum-strict-mode.md`](../done/001-gosum-strict-mode.md)
+migriert. Geplante Folge-Slices und Aktivierungspfade siehe dort.
 
 ---
 
@@ -202,11 +203,15 @@ Service nicht für andere blockieren.
 
 Liste lebt in [`docs/plan/planning/open/`](../open/). Aktueller Bestand:
 
-- [`001-gosum-strict-mode`](../open/001-gosum-strict-mode.md) — wird
-  durch den M1-Einstiegs-Slice 001 automatisch aktiviert.
 - [`002-distroless-base-fuer-cgo`](../open/002-distroless-base-fuer-cgo.md)
   — wird durch den ersten Slice aktiviert, der `github.com/miekg/pkcs11`
   importiert (geplant: M1-Slice 002).
+
+Erledigte Trigger:
+
+- [`001-gosum-strict-mode`](../done/001-gosum-strict-mode.md) —
+  eingelöst durch Slice 001 am 2026-05-27 (Dockerfile-Strict-Copy +
+  `go mod verify`).
 
 Beispiele für künftige Trigger, die noch keinen Eintrag haben:
 
