@@ -15,9 +15,15 @@ PKCS#11-Adapter (driven) führt je Chunk genau eine AES-256-GCM-
 Operation gegen das HSM aus
 ([`HSM-FA-ENC-006`](../../../../spec/spezifikation.md)), der Server
 emittiert einen formatkonformen Container
-([`HSM-FMT-001..006`](../../../../spec/spezifikation.md)). Validiert
-wird gegen SoftHSM v2 **und** ein zweites herstellerfremdes OSS-
-PKCS#11-Modul im CI (siehe ADR 0004 aus 002a).
+([`HSM-FMT-001..006`](../../../../spec/spezifikation.md)).
+Profil-A-Validierung läuft gegen **Bouncy HSM 2.x** als HKDF-fähiges
+Zweitmodul (siehe [ADR 0006](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md),
+schärft ADR 0004 §2.6; ersetzt die in ADR 0004 angesetzte
+OpenCryptoki-Default-Wahl, weil weder SoftHSM 2.6.1/2.7.0 noch
+OpenCryptoki-Software-Token `CKM_HKDF_DERIVE` implementieren —
+[Spike-Befund §6.1](002b-spike-hkdf/README.md)). SoftHSM v2 trägt
+weiterhin die nicht-HKDF-Pfade (AES-GCM, Sessions, Key-Lifecycle,
+Failure-Smoke).
 
 Dieser Slice ist der fachliche Kern von M1: er etabliert die
 hexagonale Domain-Schicht, den ersten driven Adapter, den durablen
@@ -334,7 +340,8 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   eigentlichen `C_Encrypt` ausführt. Das verletzt die
   HSM-FA-ENC-006-Akzeptanz „genau ein `C_Encrypt` pro Chunk". Der
   Adapter implementiert deshalb einen kleinen adapter-lokalen CGO-Shim
-  (oder den durch den HKDF-Spike ohnehin dokumentierten Binding-Fork),
+  (Pfad (a) Shim aus dem HKDF-Spike, fixiert in
+  [ADR 0006 §2.1](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md)),
   der den Output-Buffer deterministisch als `len(plaintext)+16`
   vorallokiert und exakt einen `C_Encrypt` mit nicht-NULL Output-Puffer
   aufruft. Ein `CKR_BUFFER_TOO_SMALL` aus diesem Pfad bleibt
@@ -1001,9 +1008,37 @@ darf erst danach starten.
    Verzeichnis mit dem Slice nach `in-progress/` (und später nach
    `done/`) als historischer Spike-Nachweis. Slice 002b wird
    **nicht** ohne diesen Spike-Output aktiviert. Der Spike erzeugt
-   außerdem die Folge-ADR zu ADR 0004 (geplant: ADR 0006) und den
+   außerdem die Folge-ADR zu ADR 0004 und den
    ADR-Index-Eintrag; ohne diese ADR-Spur wird 002b nicht nach
    `in-progress/` migriert.
+
+### Status nach Spike + ADR 0006 (2026-05-28)
+
+Die Spike-Vorbedingung 3 ist **abgeschlossen**:
+
+- Spike-Lauf grün gegen **Bouncy HSM 2.1.0** via
+  `make spike-hkdf-bouncyhsm` ([Spike-README §6.2](002b-spike-hkdf/README.md)).
+- Binding-Pfad: **(a) Shim**
+  ([ADR 0006 §2.1](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md)).
+  `CK_HKDF_PARAMS` lokal als `[]byte` serialisiert und über
+  `pkcs11.NewMechanism(uint(CKM_HKDF_DERIVE), paramBytes)` an
+  `C_DeriveKey` übergeben.
+- Zweitmodul: **Bouncy HSM** statt OpenCryptoki
+  ([ADR 0006 §2.2](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md)).
+  Hintergrund: SoftHSM 2.6.1/2.7.0 und OpenCryptoki-Software-Token
+  implementieren `CKM_HKDF_DERIVE` nicht ([Spike §6.1](002b-spike-hkdf/README.md)).
+- ADR 0006 ist `Accepted`; der ADR-Index trägt die Schärfung von
+  ADR 0004 §2.6 ein.
+
+**Offener Akzeptanzpunkt:** `HSM-FA-HSM-001` ist mit der jetzigen
+Konfiguration **nicht** vollständig erfüllt — SoftHSM kann mit der
+M1-Profil-A-Pflicht den Service nicht starten (Mechanism-Check
+`HSM-FA-HSM-005` bricht ab). Die vier Lösungspfade stehen in
+[ADR 0006 §2.2](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md):
+Profil B als M1-Fallback, Mechanism-Check pro konfiguriertem Profil,
+Lastenheft-Änderung über `HSM-LESE-004`, oder Plan-Schärfung in
+diesem Dokument. Solange keiner gegangen ist, ist die `HSM-FA-HSM-001`-
+Akzeptanz dokumentierter M1-Vorbehalt und blockiert M1-Closure.
 
 ## Akzeptanzkriterien
 
@@ -1062,16 +1097,18 @@ darf erst danach starten.
     `CKA_SENSITIVE=true`, `CKA_DERIVE=true` — Voraussetzung für
     den HKDF-Profil-A-Pfad gemäß HSM-FMT-006). Beide Labels werden
     in einer Test-Key-Registry-Datei eingetragen.
-  - **Modul-spezifisches Key-Setup:** Das zweite OSS-Modul
-    (Default OpenCryptoki, siehe ADR 0004) wird mit dem für das
-    Modul passenden Master-HMAC-Keytyp initialisiert — z. B.
-    `CKK_GENERIC_SECRET` (OpenCryptoki ICA), `CKK_SHA256_HMAC`
-    oder ein modul-spezifisches Äquivalent. Die genaue Wahl je
-    Modul ist Output des HKDF-Spike (Vorbedingung 3) und in ADR 0004
-    bzw. der Folge-ADR 0006 dokumentiert. Setup-Skripte liegen
-    pro Modul als separates Init-Script im Repo
-    (`ci/keys-init/{softhsm,opencryptoki,…}.sh`), damit kein
-    Vendor-Sniffing im Adapter-Code nötig wird.
+  - **Modul-spezifisches Key-Setup:** Das HKDF-Modul ist
+    **Bouncy HSM 2.x** ([ADR 0006 §2.2](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md)),
+    initialisiert mit `CKK_GENERIC_SECRET` als Master-HMAC-Keytyp.
+    Setup läuft über die Bouncy-HSM-REST-API (`POST /Slot` mit
+    `Token`-Block) + PyKCS11 + `BouncyHsm.Pkcs11Lib.so`
+    ([`ci/keys-init/bouncyhsm.sh`](../../../../ci/keys-init/bouncyhsm.sh)).
+    SoftHSM-Setup liegt unverändert in
+    [`ci/keys-init/softhsm.sh`](../../../../ci/keys-init/softhsm.sh)
+    und bedient die nicht-HKDF-Pfade. Beide Setup-Skripte setzen
+    alle CKA-Attribute in einem `C_CreateObject` (Slice-Plan §3
+    Punkt 5; kein nachträgliches Umschalten). Vendor-Sniffing im
+    Adapter-Code bleibt verboten.
   - Encrypt-Stream über einen in-process Test-Client mit 100 MiB
     Klartext; ein zusätzlicher `grpcurl`-Smoke gegen den Runtime-
     Container ist zulässig, aber nicht die Coverage-Quelle.
@@ -1410,45 +1447,61 @@ darf erst danach starten.
   - Repo-Audit: Key-Registry-Datei enthält weder Klartext-Schlüssel
     noch Wrap-Keys (HSM-FA-KEY-004 Akzeptanz).
 - **HSM-FA-HSM-001 Vendor-Smoke** ([`HSM-FA-HSM-001`](../../../../spec/lastenheft.md)):
-  CI führt den gleichen Integrations-Test-Pfad zweimal aus —
-  einmal gegen SoftHSM v2, einmal gegen OpenCryptoki (oder das in
-  ADR 0004 dokumentierte Alternativmodul) — **ohne Codeänderung**,
-  nur durch Umschalten von `HSMDOC_PKCS11_MODULE` und
-  `HSMDOC_PKCS11_TOKEN_LABEL`. Beide Läufe sind grüner Release-
-  Block.
+  CI führt den Integrations-Test-Pfad doppelt aus — einmal gegen
+  SoftHSM v2 (alle nicht-HKDF-Pfade: AES-GCM, Sessions, Lifecycle,
+  Failure-Smoke), einmal gegen Bouncy HSM 2.x ([ADR 0006 §2.2](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md)
+  für die Modulwahl). Umgeschaltet wird ohne Codeänderung, nur über
+  `HSMDOC_PKCS11_MODULE` und `HSMDOC_PKCS11_TOKEN_LABEL`. **Achtung:**
+  Solange Profil A M1-Pflicht ist (HSM-FMT-006) und SoftHSM
+  `CKM_HKDF_DERIVE` nicht implementiert, bricht der SoftHSM-Lauf am
+  Mechanism-Check ab — `HSM-FA-HSM-001` ist damit nicht vollständig
+  erfüllt (siehe §Vorbedingungen „Status nach Spike + ADR 0006" und
+  [ADR 0006 §2.2](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md)).
+  Der hier dokumentierte Doppel-Smoke wird grün, sobald einer der
+  vier ADR-0006-Lösungspfade gegangen wurde.
 - **HKDF-Profil-A-Pflicht** ([`HSM-FMT-006`](../../../../spec/spezifikation.md) §1):
-  Beide CI-Module (SoftHSM v2 und das zweite OSS-Modul) müssen
-  `CKM_HKDF_DERIVE` unterstützen — Start gegen ein Modul ohne
-  diesen Mechanismus scheitert deterministisch mit Hinweis auf
-  HSM-FMT-006. Metrik `hsmdoc_header_hmac_profile{profile="A"}`
-  wird in beiden Läufen gesetzt; Roundtrip-Test (Encrypt-Container
-  → Header-HMAC neu berechnen aus identischen Inputs → byteweiser
-  Vergleich) ist grün.
+  Das HKDF-Modul (in M1: Bouncy HSM 2.x) muss `CKM_HKDF_DERIVE`
+  bedienen — Start gegen ein nicht-HKDF-fähiges Modul scheitert
+  deterministisch mit Hinweis auf HSM-FMT-006. Metrik
+  `hsmdoc_header_hmac_profile{profile="A"}` wird gesetzt;
+  Roundtrip-Test (Encrypt-Container → Header-HMAC neu berechnen
+  aus identischen Inputs → byteweiser Vergleich) ist grün. **Die im
+  Spike validierte Pure-Go-Referenz
+  ([`spike/verify.go`](002b-spike-hkdf/spike/verify.go))
+  liefert nur den Spike-Vergleichswert; produktiver Adapter-Code
+  unter `internal/adapter/driven/pkcs11/` kennt das IKM nie**
+  ([ADR 0006 §4](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md),
+  Pflege-Regel zur Pure-Go-Isolation).
 - **`CK_HKDF_PARAMS`-Shim verifiziert** (Spike-Output, siehe
-  Vorbedingung 3): Der eingesetzte Pfad — Shim, Fork oder Fallback —
-  ist in einer neuen Folge-ADR zu ADR 0004 (geplant: ADR 0006)
-  dokumentiert und der ADR-Index ist aktualisiert. Ein dedizierter
-  Adapter-Unit-Test
-  ruft `C_DeriveKey` mit `CKM_HKDF_DERIVE` und prüft, dass der
+  §Vorbedingungen „Status nach Spike + ADR 0006"): Der gewählte
+  Pfad ist **(a) Shim**, fixiert in
+  [ADR 0006 §2.1](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md),
+  ADR-Index aktualisiert. Ein dedizierter Adapter-Unit-Test ruft
+  `C_DeriveKey` mit `CKM_HKDF_DERIVE` und prüft, dass der
   zurückgegebene Handle `CKA_SIGN=true`, `CKA_TOKEN=false`,
-  `CKA_EXTRACTABLE=false` / `CKA_SENSITIVE=true` trägt, gegen
-  `C_WrapKey` mit `CKR_KEY_UNEXTRACTABLE` antwortet und per
-  `C_DestroyObject` zerstörbar ist.
+  `CKA_EXTRACTABLE=false` / `CKA_SENSITIVE=true` trägt; der
+  Sensitive-Negativtest läuft (Spike-konform) über
+  `C_GetAttributeValue(CKA_VALUE) → CKR_ATTRIBUTE_SENSITIVE`
+  (siehe Spike-Trace-Sequenz Schritt 7), nicht über `C_WrapKey`.
+  Der Adapter-Codepfad muss per `C_DestroyObject` zerstörbar sein
+  (Trace Schritt 10), und ein anschließendes `C_SignInit` auf dem
+  zerstörten Handle liefert `CKR_OBJECT_HANDLE_INVALID` (Trace
+  Schritt 11).
 - **HSM-FA-HSM-001 — Vendor-Portabilität (Pflicht in Slice 002b):**
   Modulpfad und Slot/Token-Label sind konfigurierbar; der Adapter-
   Codepfad enthält keine Vendor-Strings — Mechanismus-Wahl läuft
   strikt über `C_GetMechanismList`. Code-Review-Akzeptanz:
-  `grep -iE "softhsm|opencryptoki|utimaco|thales"` im Adapter-Code
-  findet keine Vendor-Verzweigung. **Zweiter herstellerfremder
-  PKCS#11-Modul-Smoke** läuft im CI ohne Codeänderung gegen
-  SoftHSM v2 **und** das in ADR 0004 (aus 002a) festgelegte
-  zweite Modul. Ein zweites SoftHSM-Image mit divergenter
-  Token-Konfiguration ist **kein** Ersatz-Nachweis und zählt
-  höchstens als zusätzlicher Smoke. Damit ist
-  [`HSM-FA-HSM-001`](../../../../spec/lastenheft.md)
-  Akzeptanz („Start gegen SoftHSM v2 und ein zweites
-  herstellerfremdes Modul ohne Codeänderung") mit Slice 002b
-  erfüllt.
+  `grep -iE "softhsm|opencryptoki|bouncyhsm|utimaco|thales"` im
+  Adapter-Code findet keine Vendor-Verzweigung (Bouncy-HSM-
+  Connection-String steht ausschließlich in der CI-Test-Umgebung,
+  nicht im Adapter-Code). **Vendor-Smoke** läuft im CI ohne
+  Codeänderung gegen SoftHSM v2 **und** Bouncy HSM 2.x
+  ([ADR 0006 §2.2](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md)).
+  Ein zweites SoftHSM-Image mit divergenter Token-Konfiguration ist
+  **kein** Ersatz-Nachweis und zählt höchstens als zusätzlicher
+  Smoke. Status der `HSM-FA-HSM-001`-Akzeptanz: **offen**, siehe
+  §Vorbedingungen „Status nach Spike + ADR 0006" und
+  [ADR 0006 §2.2](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md).
 - **CGO/Pure-Go-Gates:** `make test` läuft mit `CGO_ENABLED=0`
   erfolgreich und kompiliert das PKCS#11-Paket nur über den `!cgo`-
   Stub; ein Test belegt, dass der Stub bei Initialisierung
