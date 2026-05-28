@@ -1,6 +1,8 @@
 # CI-Spike-Schlüsselinitialisierung
 
-**Status:** in Arbeit — `softhsm.sh` landed, `opencryptoki.sh` folgt
+**Status:** `softhsm.sh` + `bouncyhsm.sh` landed (Bouncy-HSM-Lauf gegen
+Pfad (a) Shim ist Spike-Erfolg, siehe Spike-README §6.2).
+SoftHSM bleibt blockiert wegen fehlendem `CKM_HKDF_DERIVE`.
 **Bezug:** [Slice 002b §Akzeptanz](../../docs/plan/planning/next/002b-pkcs11-encrypt-hexagon.md),
 [Spike-README](../../docs/plan/planning/next/002b-spike-hkdf/README.md),
 [Slice-002b-Plan §3 Punkt 5](../../docs/plan/planning/next/002b-spike-hkdf/README.md)
@@ -44,5 +46,14 @@ deshalb hier in `ci/keys-init/`.
 
 ## Skripte
 
-- [`softhsm.sh`](softhsm.sh) — SoftHSM v2 Spike-Init.
-- `opencryptoki.sh` — folgt mit dem OpenCryptoki-Pfad-Inkrement.
+- [`softhsm.sh`](softhsm.sh) — SoftHSM v2 Spike-Init. Skript ist
+  technisch grün, **aber das Modul implementiert `CKM_HKDF_DERIVE`
+  weder in 2.6.1 noch in 2.7.0**; der Spike-HSM-Test skippt
+  entsprechend.
+- [`bouncyhsm.sh`](bouncyhsm.sh) — Bouncy HSM 2.x Spike-Init. Slot via
+  REST-API anlegen, FixtureIKM via PyKCS11 + `BouncyHsm.Pkcs11Lib.so`
+  importieren. Spike-Erfolg (HKDF + HMAC-SHA-256 byteweise gegen
+  Pure-Go-Referenz verifiziert).
+- `opencryptoki.sh` — **nicht geplant** (HKDF nur in EP11-Hardware-
+  Backend, Software-Token unterstützt es nicht — siehe Spike-README
+  §6.1).

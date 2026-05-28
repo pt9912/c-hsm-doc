@@ -1,10 +1,13 @@
 # Spike — `CKM_HKDF_DERIVE` auf SoftHSM v2 + OpenCryptoki
 
-**Status:** in Arbeit — Pfad (a) Shim-Serialisierer + Pure-Go-HKDF-
-Referenz + CGO-HSM-Pfade (`miekg/pkcs11`) landed. Pure-Go-Tests grün
-(RFC-5869-A.1 verifiziert); SoftHSM-Lauf skippt sauber wegen fehlendem
-`CKM_HKDF_DERIVE` (siehe §6.1). Bouncy HSM als HKDF-fähiges Zweitmodul
-identifiziert; Setup folgt in Phase 2.
+**Status:** Spike-Erfolg auf Bouncy HSM 2.1.0 — Pfad (a) Shim
+End-to-End grün gegen `CKM_HKDF_DERIVE` + `CKM_SHA256_HMAC`,
+HSM-Tag stimmt byteweise mit Pure-Go-RFC-5869-Referenz überein
+(siehe §6.1). SoftHSM v2.6.1/2.7.0 + OpenCryptoki-Software-Token
+bleiben blockiert (kein HKDF). Reproduktion via
+`ci/keys-init/bouncyhsm.sh` + Bouncy-HSM-Image
+([`ci/bouncyhsm/Dockerfile`](../../../../ci/bouncyhsm/Dockerfile));
+Make-Target und Folge-ADR 0006 folgen.
 **Datum:** 2026-05-28
 **Bezug:**
 [Slice 002b §Vorbedingungen](../002b-pkcs11-encrypt-hexagon.md),
@@ -231,16 +234,41 @@ durch und skippt mit klarer Meldung, wenn das Modul HKDF nicht
 anbietet. Pure-Go-HKDF-Referenz (RFC-5869-A.1) bleibt unangetastet
 und grün.
 
-### 6.2 Nächste Spike-Schritte
+### 6.2 Bouncy-HSM-Erfolg (2026-05-28)
 
-1. Bouncy HSM als Zweitmodul aufnehmen
-   (`ci/keys-init/bouncyhsm.sh` + Docker-Setup für .NET-Backend +
-   PKCS#11-Client-Lib). End-to-End-Lauf gegen Bouncy HSM erwartet:
-   `C_DeriveKey` → Handle, `C_Sign` → 32-Byte-Tag, byteweiser
-   Vergleich gegen `ExpectedHeaderMAC` grün.
-2. Folge-ADR zu ADR 0004 (geplant: ADR 0006) — Modul-Wechsel
-   begründen, Bouncy HSM als Zweitmodul fixieren, SoftHSM-Profil-A-
-   Lücke dokumentieren.
+End-to-End-Lauf grün gegen Bouncy HSM 2.1.0 (siehe
+[`ci/bouncyhsm/Dockerfile`](../../../../ci/bouncyhsm/Dockerfile)
+für das Image, [`ci/keys-init/bouncyhsm.sh`](../../../../ci/keys-init/bouncyhsm.sh)
+für das Setup):
+
+- **C_DeriveKey** mit `CKM_HKDF_DERIVE` + `CK_HKDF_PARAMS`-Shim
+  + Template (`CKA_VALUE_LEN=32`, `CKA_SIGN=true`,
+  `CKA_EXTRACTABLE=false`, `CKA_SENSITIVE=true`) liefert
+  Header-Key-Handle.
+- **CKA_VALUE-Auslese** auf dem Header-Key →
+  `CKR_ATTRIBUTE_SENSITIVE` (deckt §3 Punkt 3).
+- **C_Sign** mit `CKM_SHA256_HMAC` über headerBytes liefert
+  32-Byte-HMAC-Tag.
+- **byteweiser Vergleich** gegen `ExpectedHeaderMAC` aus
+  [`spike/verify.go`](spike/verify.go) (Pure-Go-HKDF+HMAC mit
+  identischem Fixture-IKM) — **identisch** (deckt §3 Punkt 5).
+- **C_DestroyObject** + **Post-Destroy-C_SignInit** liefert
+  `CKR_OBJECT_HANDLE_INVALID` (deckt §3 Punkt 4).
+- Reproduktion: Bouncy-HSM-Server-Container + Setup-Container
+  + Test-Container über Docker-Network; `BOUNCY_HSM_CFG_STRING`
+  zeigt die PKCS#11-Library auf den TCP-Endpoint (8765).
+
+**Damit ist Pfad (a) Shim auf einem CI-Modul validiert.**
+
+### 6.3 Nächste Spike-Schritte
+
+1. Reproduzierbares Make-Target (`make spike-hkdf-bouncyhsm`):
+   Bouncy-HSM-Image bauen, Server starten, Init, Test, Teardown
+   in einem Docker-Compose-Style-Setup.
+2. Folge-ADR zu ADR 0004 (geplant: ADR 0006 — HKDF-Profil-A-
+   Binding + Bouncy-HSM-Modulwahl): begründet Modul-Wechsel von
+   OpenCryptoki auf Bouncy HSM, dokumentiert SoftHSM-Profil-A-
+   Lücke + Bouncy-HSM-Erfolg.
 3. Slice-002b-Plan auf Bouncy HSM als Zweitmodul aktualisieren
    (additive Erweiterung; Plan ist noch in `next/`, nicht
    `Accepted`).
