@@ -11,13 +11,19 @@
 # kein CKM_HKDF_DERIVE, siehe Spike-README §6.1).
 
 ARG BOUNCYHSM_VERSION=2.1.0
+# SHA-256 of the BouncyHsm.zip release artifact for the pinned version.
+# Pinning is required by ADR 0002 (supply-chain posture); ADR 0006 §2.2
+# documents this for the spike-only Bouncy HSM container.
+ARG BOUNCYHSM_SHA256=04c4600348212baf1d69e036cfaea182e1cdc9f65691e0100c0eeb3e125ad593
 ARG ALPINE_BASE=alpine:3.23
 ARG ASPNET_BASE=mcr.microsoft.com/dotnet/aspnet:10.0
 
 FROM ${ALPINE_BASE} AS download
 ARG BOUNCYHSM_VERSION
+ARG BOUNCYHSM_SHA256
 WORKDIR /unzip
-ADD https://github.com/harrison314/BouncyHsm/releases/download/v${BOUNCYHSM_VERSION}/BouncyHsm.zip .
+ADD --checksum=sha256:${BOUNCYHSM_SHA256} \
+    https://github.com/harrison314/BouncyHsm/releases/download/v${BOUNCYHSM_VERSION}/BouncyHsm.zip .
 RUN apk --update add unzip && \
     rm -rf /var/cache/apk/* && \
     unzip -q BouncyHsm.zip && \

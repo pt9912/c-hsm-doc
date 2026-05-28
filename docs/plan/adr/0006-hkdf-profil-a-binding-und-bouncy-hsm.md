@@ -124,19 +124,56 @@ Akzeptanz nicht tragen, gleichgültig wie stabil es im CI läuft.
 
 Konkrete Modulwahl: **Bouncy HSM 2.1.0**, gebaut aus dem
 offiziellen Release-Tarball (`BouncyHsm.zip`) via
-[`ci/bouncyhsm/Dockerfile`](../../../ci/bouncyhsm/Dockerfile). Setup-
-Skript [`ci/keys-init/bouncyhsm.sh`](../../../ci/keys-init/bouncyhsm.sh)
+[`ci/bouncyhsm/Dockerfile`](../../../ci/bouncyhsm/Dockerfile). Das
+Dockerfile pinnt den Release-Tarball per SHA-256-Checksum (`ADD
+--checksum=sha256:…`) — Supply-Chain-Pinning analog
+[ADR 0002 §2.4](0002-docker-only-build-pipeline.md), auch für
+Spike-/Test-only-Artefakte. Eine Version-Aktualisierung verlangt
+explizites Update von `BOUNCYHSM_VERSION` **und**
+`BOUNCYHSM_SHA256` im Dockerfile; ein unbemerkter Tarball-Wechsel
+ist damit ausgeschlossen.
+
+Setup-Skript
+[`ci/keys-init/bouncyhsm.sh`](../../../ci/keys-init/bouncyhsm.sh)
 legt Slot + Token über die REST-API an (`POST /Slot`) und importiert
 den 32-Byte-Fixture-IKM per PyKCS11 mit dem vom Server bereitgestellten
 nativen `BouncyHsm.Pkcs11Lib.so`. Alle CKA-Attribute werden in einem
 `C_CreateObject` gesetzt (Slice-Plan §3 Punkt 5; kein nachträgliches
 Umschalten).
 
-`HSM-FA-HSM-001` Akzeptanz für Profil A liest sich damit als „SoftHSM v2
-**für alle Pfade, die ohne HKDF auskommen** (AES-GCM, Sessions,
-Key-Lifecycle, Token-Removal-Smoke), **plus** Bouncy HSM **für den
-Profil-A-Pfad**". Slice 002b-Plan-Update (siehe Spike-README §6.3
-Punkt 3) trägt diese Aufteilung explizit ein.
+**Wichtig — `HSM-FA-HSM-001`-Status:** Diese ADR fixiert die
+Spike-/Profil-A-Modulwahl; sie **schließt die
+`HSM-FA-HSM-001`-Akzeptanz nicht**. Das Lastenheft
+([`spec/lastenheft.md`](../../../spec/lastenheft.md), `HSM-FA-HSM-001`)
+verlangt erfolgreichen Service-Start gegen SoftHSM v2 **und** ein
+zweites herstellerfremdes Modul ohne Codeänderung. Solange der
+Service auf Profil A festgelegt ist und SoftHSM `CKM_HKDF_DERIVE`
+nicht anbietet, wird ein Service-Start gegen SoftHSM am
+Mechanism-Check ([`HSM-FA-HSM-005`](../../../spec/spezifikation.md))
+deterministisch abbrechen — die Akzeptanz ist damit **offen**.
+
+Diese Lücke ist nicht durch ADR-Eingriff schließbar — ADR-Sharpening
+darf Lastenheft-Akzeptanz nicht aufweichen. Sie muss in einem der
+folgenden Pfade gelöst werden, und das ist explizit **kein** Scope
+dieser ADR:
+
+1. **Slice-002b-Plan-Update** (Spike-README §6.3 Punkt 3): Erfasst
+   den jetzigen Stand klar und führt den Lösungspfad
+   per Plan-Schärfung herbei.
+2. **Profil-B-Fallback als M1-Header-HMAC-Konfig** (Software-HMAC-
+   Konstruktion, derzeit Slice-002b §HeaderMAC-Port-Profil-B-Block
+   M3-Scope). Wenn als M1-Pfad gezogen, wäre `HSM-FA-HSM-001` mit
+   SoftHSM + Bouncy HSM erfüllbar; eigene Folge-ADR.
+3. **Profil-Wahl als Service-Konfiguration**: Mechanism-Check
+   prüft je Modul nur die für das konfigurierte Profil notwendigen
+   Mechanismen. Erweiterung der Spec (`HSM-FA-HSM-005`); eigene
+   Folge-ADR.
+4. **Modul-Tausch in der `HSM-FA-HSM-001`-Akzeptanz** (z. B. zwei
+   beliebige HKDF-fähige Module): Lastenheft-Änderung über
+   `HSM-LESE-004`-Pfad; ADR alleine reicht nicht.
+
+Bis einer dieser Pfade gegangen ist, ist `HSM-FA-HSM-001` für M1
+**dokumentierter offener Akzeptanzpunkt**, nicht erfüllt.
 
 ### 2.3 SoftHSM bleibt Erstmodul für nicht-HKDF-Pfade
 
@@ -173,10 +210,11 @@ heute diese ADR 0006; der ADR-Index trägt die Schärfungs-Beziehung.
 
 ## 3. Konsequenzen
 
-- **Slice 002b ist HKDF-fähig**, sobald der Slice-Plan auf Bouncy HSM
-  als Zweitmodul aktualisiert wurde (siehe Spike-README §6.3 Punkt 3).
-  Die Slice-Akzeptanz §3 Punkt 5 (Vergleich gegen Pure-Go-HKDF) ist
-  live-grün gegen Bouncy HSM 2.1.0.
+- **Slice 002b ist HKDF-fähig** auf Bouncy HSM. Die Slice-Akzeptanz
+  §3 Punkt 5 (Vergleich gegen Pure-Go-HKDF) ist live-grün gegen
+  Bouncy HSM 2.1.0. Die `HSM-FA-HSM-001`-Akzeptanz für M1 ist damit
+  **nicht** geschlossen (siehe §2.2-Schluss); Slice-Plan-Update +
+  einer der vier dort genannten Pfade müssen folgen.
 - **CI-Stack wird breiter:** SoftHSM-Container für nicht-HKDF-Pfade,
   Bouncy-HSM-Container (.NET aspnet:10.0) für den HKDF-Pfad. Der
   Spike-Lauf `make spike-hkdf-bouncyhsm` bringt beide Container in
@@ -228,11 +266,18 @@ heute diese ADR 0006; der ADR-Index trägt die Schärfungs-Beziehung.
   geregelt. Bei einem Bouncy-HSM-Ausfall vor Slice-002b-Closure wird
   diese Entscheidung separat geprüft.
 - **Produktive HSM-Profile (M3)** bleiben in der separaten Profil-
-  Validierung je Vendor-HSM. Diese ADR bindet den Binding-Pfad (a)
-  nicht an einen Vendor-Mechanismus-Layout-Quirk; sollte ein
-  Vendor-HSM ein abweichendes `CK_HKDF_PARAMS`-Encoding verlangen
-  (z. B. Big-Endian, abweichendes Padding), wird das pro Profil als
-  ADR-Schärfung dokumentiert.
+  Validierung je Vendor-HSM. Der Binding-Pfad (a) folgt dem
+  Client-Prozess-ABI (LP64-Little-Endian auf den vom Spike unterstützten
+  Architekturen `amd64`/`arm64`, siehe Build-Tag-Klausel in
+  [`spike/doc.go`](../planning/next/002b-spike-hkdf/spike/doc.go)). Ein
+  Vendor-Modul, das auf demselben ABI ein abweichendes
+  `CK_HKDF_PARAMS`-Encoding (Big-Endian, abweichendes Padding etc.)
+  verlangt, ist Modul-Bug, kein Profil-Variant — sowas würde
+  PKCS#11-Konformität verletzen. Marshal-Anpassungen sind
+  ausschließlich bei einem **Target-ABI-Wechsel** zulässig (z. B.
+  Build für 32-Bit-LP32 oder eine Big-Endian-Architektur wie
+  AIX-PPC64); dann als eigener Build-Tag + eigener Marshal-Pfad, mit
+  Folge-ADR.
 - **Reaktivierung von OpenCryptoki/NSS-Softoken** für nicht-HKDF-
   Pfade ist außerhalb dieser ADR; falls relevant, eigene Folge-ADR.
 - **Slice-002b-Plan-Update** (Bouncy HSM als Zweitmodul im
