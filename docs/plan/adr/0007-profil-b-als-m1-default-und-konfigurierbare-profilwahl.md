@@ -70,11 +70,32 @@ aktiven Profil. Profil-Wechsel zur Laufzeit ist nicht zulässig
 Code-Layout: zwei parallele HeaderMAC-Implementierungen
 `internal/adapter/driven/pkcs11/headermac/{profile_a.go,
 profile_b.go}`, beide implementieren denselben `HeaderMAC`-Port
-aus Slice 002b. Der Wire-Container-Header trägt das aktive Profil
-**nicht** — `HSM-FMT-001` ist davon unberührt; Decrypt-Verifikation
-hängt am Master-HMAC-Label, nicht am Profil. Der gleiche Server
-kann Streams unterschiedlich konfigurierter Server (per Modul-
-Migration) entschlüsseln, solange der Master-HMAC-Key auflösbar ist.
+aus Slice 002b.
+
+**Korrektur zur Cross-Profil-Kompatibilität (Spike-Befund
+2026-05-28):** Profil A nutzt natives RFC-5869-HKDF; Profil B nutzt
+die Spec-Konstruktion
+`HMAC(HMAC(HMAC(IKM, salt), info||0x01), headerBytes)` (zwei
+HMAC-Schritte für HKDF-Extract+Expand, danach Header-HMAC,
+[HSM-FMT-006 §1 Profil B](../../../spec/spezifikation.md)). Diese
+zwei Konstruktionen liefern **unterschiedliche** Header-Keys —
+ein Container, der mit Profil A erzeugt wurde, kann **nicht** mit
+Profil B verifiziert werden und umgekehrt. Damit gilt:
+
+- `HSM-FMT-001`-Wire-Header trägt das Profil **nicht**; ein
+  Container ist nur im selben Profil verifizierbar, mit dem er
+  erzeugt wurde.
+- Profil-Wahl ist eine **deployment-weite** Entscheidung —
+  Operator wählt pro Cluster ein Profil; Streams aus anderen
+  Clustern mit anderem Profil sind nicht ohne Profil-Wechsel
+  lesbar.
+- Eine spätere Migration auf das jeweils andere Profil bedingt
+  eine Re-Encrypt-Phase oder eine Container-Header-Erweiterung
+  (eigene Folge-ADR).
+
+Diese Beschränkung war in der initialen ADR 0007 nicht erkannt
+und wird hier nachgezogen. Die im Slice-Plan §HeaderMAC-Port
+ursprünglich behauptete Cross-Profil-Verifikation entfällt.
 
 ### 2.2 Profil B als M1-Pflicht und Default
 
@@ -194,13 +215,26 @@ Library-Closure-Verifikation gelten unverändert.
 
 ## 4. Compliance-Implikationen für Profil B
 
-- **PRK lebt kurzfristig im Server-RAM:** Zwischen `C_Sign(extract)`
-  und `C_CreateObject(prk-reimport)` ist der PRK als Klartext im
-  Server-Heap. Der Adapter MUSS:
-  - PRK in einen lokalen `[]byte` lesen,
-  - `C_CreateObject` unmittelbar danach aufrufen,
-  - den `[]byte` zeroizen (`for i := range prk { prk[i] = 0 }`),
-  - kein Logging, kein Trace, kein temp-File für den PRK-Wert.
+- **Zwei Klartext-Werte leben kurzfristig im Server-RAM:** der PRK
+  (Output von HKDF-Extract) zwischen `C_Sign(extract)` und
+  `C_CreateObject(prk-reimport)`, und der Header-Key (Output von
+  HKDF-Expand) zwischen `C_Sign(expand)` und
+  `C_CreateObject(header-key-reimport)`. Die Profil-B-Spec-
+  Konstruktion macht zwei HMAC-Schritte explizit, jeder produziert
+  einen Klartext-Wert im Heap.
+- **Zeroize-Owner-Vertrag (eindeutig, eine Verantwortliche):** Die
+  `Extract`- und `Expand`-Helper sind die Owner der jeweiligen
+  Klartext-Buffer. Beide setzen `defer zeroize(buf)` **unmittelbar**
+  nach `C_Sign` und vor jedem weiteren Statement (`return` inklusive).
+  Aufrufer rufen `ReimportPRK` / `ReimportHeaderKey` und müssen den
+  übergebenen Buffer **nicht** selbst zeroizen — der `defer`-Loop
+  greift am Stack-Frame-Ende des Helpers, was nach dem Re-Import
+  erfolgt. Damit gibt es keine Owner-Konflikte und kein Error-Pfad,
+  der den Zeroize-Schritt überspringen kann (das `defer` läuft auch
+  bei `panic` und früher `return`).
+- **Adapter-Pflichten zusätzlich:** kein Logging, kein Trace, kein
+  temp-File für PRK oder Header-Key. `gosec`-/Code-Review-Gate
+  verbietet `fmt.Sprintf("%x", prk)`-artige Aufrufe.
 - **Master-Key bleibt vollständig non-extractable.** Profil B
   verändert die Master-Key-Attribute nicht. Die
   Sensitive-/Extractable-Invarianten auf dem Master-Key sind
