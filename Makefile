@@ -75,7 +75,7 @@ SMOKE_PKCS11_MODULE     ?= /usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so
 .PHONY: help deps compile lint test coverage coverage-gate build run clean \
         gates ci fullbuild govulncheck docs-check proto-gen proto-check \
         closure-check smoke-dlopen image-scan image-size \
-        dev-softhsm dev-down dev-purge spike-hkdf-test
+        dev-softhsm dev-down dev-purge spike-hkdf-test spike-hkdf-bouncyhsm
 
 # Spike-Verzeichnis aus Slice 002b §Vorbedingung 3 (ADR 0005 §2.2).
 SPIKE_HKDF_PKG := ./docs/plan/planning/next/002b-spike-hkdf/spike/...
@@ -212,6 +212,9 @@ spike-hkdf-test: ## Pure-Go-Unit-Tests des CK_HKDF_PARAMS-Serialisierers (Spike 
 	    -e GOFLAGS="-mod=readonly -buildvcs=false" \
 	    $(GO_BASE_IMAGE) \
 	    go test -tags=spike $(SPIKE_HKDF_PKG)
+
+spike-hkdf-bouncyhsm: ## Reproducible E2E run: Bouncy HSM image + setup + Go HKDF test (Spike 002b §6.2).
+	bash scripts/spike-hkdf-bouncyhsm.sh
 
 # ---- local dev environment -------------------------------------------------
 

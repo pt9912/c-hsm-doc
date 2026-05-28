@@ -262,9 +262,12 @@ für das Setup):
 
 ### 6.3 Nächste Spike-Schritte
 
-1. Reproduzierbares Make-Target (`make spike-hkdf-bouncyhsm`):
-   Bouncy-HSM-Image bauen, Server starten, Init, Test, Teardown
-   in einem Docker-Compose-Style-Setup.
+1. **Make-Target `spike-hkdf-bouncyhsm`** — landed
+   ([`scripts/spike-hkdf-bouncyhsm.sh`](../../../../scripts/spike-hkdf-bouncyhsm.sh),
+   Makefile-Target `spike-hkdf-bouncyhsm`). Reproduziert den gesamten
+   Lauf: Image-Build → Docker-Network → Server-Start → Ready-Probe
+   → Lib-Extraktion → Init-Skript → Go-Test → Cleanup (Trap, läuft
+   auch bei Fehler). Host bleibt clean (ADR 0002).
 2. Folge-ADR zu ADR 0004 (geplant: ADR 0006 — HKDF-Profil-A-
    Binding + Bouncy-HSM-Modulwahl): begründet Modul-Wechsel von
    OpenCryptoki auf Bouncy HSM, dokumentiert SoftHSM-Profil-A-
