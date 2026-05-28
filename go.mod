@@ -3,6 +3,7 @@ module github.com/pt9912/c-hsm-doc
 go 1.26.0
 
 require (
+	github.com/miekg/pkcs11 v1.1.2
 	golang.org/x/crypto v0.51.0
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11

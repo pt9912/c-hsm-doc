@@ -1,9 +1,10 @@
 # Spike — `CKM_HKDF_DERIVE` auf SoftHSM v2 + OpenCryptoki
 
 **Status:** in Arbeit — Pfad (a) Shim-Serialisierer + Pure-Go-HKDF-
-Referenz + Unit-Tests landed (`make spike-hkdf-test` grün, RFC-5869-A.1
-verifiziert); HSM-Aufrufpfade (`C_DeriveKey`, `C_SignInit`, `C_Sign`,
-`C_DestroyObject`) gegen SoftHSM v2 + OpenCryptoki ausstehend.
+Referenz + CGO-HSM-Pfade (`miekg/pkcs11`) landed. Pure-Go-Tests grün
+(RFC-5869-A.1 verifiziert); SoftHSM-Lauf skippt sauber wegen fehlendem
+`CKM_HKDF_DERIVE` (siehe §6.1). Bouncy HSM als HKDF-fähiges Zweitmodul
+identifiziert; Setup folgt in Phase 2.
 **Datum:** 2026-05-28
 **Bezug:**
 [Slice 002b §Vorbedingungen](../002b-pkcs11-encrypt-hexagon.md),
@@ -198,14 +199,57 @@ und OpenCryptoki bereits mit.
 
 ## 6. Ergebnis
 
-_(wird nach dem Spike-Lauf befüllt)_
+### 6.1 Zwischenstand 2026-05-28 — Modul-Mechanismus-Lücke
 
-Strukturvorlage:
+**Spike-Befund (live verifiziert + Code-Recherche):**
+
+| Modul                          | `CKM_HKDF_DERIVE`? | Beleg                                                      |
+| ------------------------------ | ------------------ | ---------------------------------------------------------- |
+| SoftHSM v2.6.1 (Debian 12)     | **nein**           | `C_DeriveKey` → `CKR_MECHANISM_INVALID` (0x70), live       |
+| SoftHSM v2.7.0 (latest, Jan 26)| **nein**           | NEWS-Datei + GitHub-Source-Search: nur `pkcs11.h`-Konstante, keine Implementierung |
+| OpenCryptoki (Software-Token)  | **nein**           | Source-Search: `HKDF` nur in `usr/lib/ep11_stdll/ep11.h` (IBM-EP11-Hardware-Backend) |
+| Bouncy HSM                     | **ja**             | `src/Src/BouncyHsm.Core/Services/Contracts/Generators/HkdfDeriveKeyGenerator.cs`, aktiv (letzte Aktualisierung 2026-05-14) |
+
+**Pfad (a) Shim — Binding-Seite:** Korrekt validiert.
+`CK_HKDF_PARAMS`-Serialisierung kommt im Modul an
+([`spike/derive.go`](spike/derive.go) + [`spike/mechanism.go`](spike/mechanism.go)),
+`miekg/pkcs11.NewMechanism(uint(CKM_HKDF_DERIVE), paramBytes)` reicht den
+64-Byte-Block durch. Das HSM-seitige Fail ist **keine** Binding-Lücke,
+sondern eine Modul-Mechanismus-Lücke.
+
+**Folge:** Die im Slice-002b-Plan vorgesehene Modul-Kombination
+(SoftHSM v2 + OpenCryptoki, [ADR 0004](../../../adr/0004-runtime-base-cgo-pkcs11.md))
+trägt Profil A in beiden Software-Modulen **nicht**. Das ist
+Pfad-(c)-Eskalationsmaterial aus dem Slice-Plan §Vorbedingung 3: „mit
+einem anderen Zweitmodul". Bouncy HSM ist der einzige Open-Source-
+Software-HSM mit HKDF-Implementierung.
+
+**Verteidigung des laufenden Pure-Go-Codes:** Der `make spike-hkdf-test`-
+Lauf bleibt grün — `TestHKDFEndToEndAgainstHSM` führt jetzt einen
+Pre-Flight `HasMechanism`-Check ([`spike/connect.go`](spike/connect.go))
+durch und skippt mit klarer Meldung, wenn das Modul HKDF nicht
+anbietet. Pure-Go-HKDF-Referenz (RFC-5869-A.1) bleibt unangetastet
+und grün.
+
+### 6.2 Nächste Spike-Schritte
+
+1. Bouncy HSM als Zweitmodul aufnehmen
+   (`ci/keys-init/bouncyhsm.sh` + Docker-Setup für .NET-Backend +
+   PKCS#11-Client-Lib). End-to-End-Lauf gegen Bouncy HSM erwartet:
+   `C_DeriveKey` → Handle, `C_Sign` → 32-Byte-Tag, byteweiser
+   Vergleich gegen `ExpectedHeaderMAC` grün.
+2. Folge-ADR zu ADR 0004 (geplant: ADR 0006) — Modul-Wechsel
+   begründen, Bouncy HSM als Zweitmodul fixieren, SoftHSM-Profil-A-
+   Lücke dokumentieren.
+3. Slice-002b-Plan auf Bouncy HSM als Zweitmodul aktualisieren
+   (additive Erweiterung; Plan ist noch in `next/`, nicht
+   `Accepted`).
+
+### 6.3 Closure-Vorlage (wird nach Phase 2 befüllt)
 
 - **Spike-Datum:** YYYY-MM-DD
-- **Geprüfte Pfade:** a / b / c — je Modul (SoftHSM v2, OpenCryptoki)
-- **Gewählter Pfad:** a (Shim) | b (Fork: `<repo>@<commit>`) | c (Fallback,
-  Slice 002b zurück nach Planung)
+- **Geprüfte Pfade:** a / b / c — je Modul
+- **Gewählter Pfad:** a (Shim) | b (Fork) | c (Fallback)
 - **Trace-Belege:** Verweis auf `trace/<modul>-<pfad>.log`
 - **Folge-ADR:** ADR 0006 — HKDF-Profil-A-Binding, Status `Proposed`/`Accepted`
 - **Roadmap-Update:** Slice-002b-Vorbedingung-3 abgehakt, Slice nach

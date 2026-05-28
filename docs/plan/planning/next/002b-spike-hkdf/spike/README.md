@@ -30,7 +30,9 @@ SoftHSM v2 und OpenCryptoki exerziert. Konventionen:
   Spy-Output wandert nach `../trace/<modul>-<pfad>.log` (siehe
   [trace/README.md](../trace/README.md)).
 
-## Aktuelle Dateien (Pure-Go, Pfad a Shim + HKDF-Referenz)
+## Aktuelle Dateien
+
+Pure-Go (Pfad a Shim + HKDF-Referenz):
 
 - `doc.go` — Paket-Doc, Build-Tag-Klammer.
 - `fixture.go` — `FixtureIKM` (32 Byte, niemals produktiv) +
@@ -48,14 +50,17 @@ SoftHSM v2 und OpenCryptoki exerziert. Konventionen:
 - `verify_test.go` — RFC-5869-A.1-Testvektor für die HKDF-Stufe
   + Determinismus-/Salt-Sensitivity-/Längen-Tests.
 
-## Geplant (HSM-Aufrufpfade, folgen mit dem ersten HSM-Lauf)
+CGO (HSM-Aufrufpfade gegen `miekg/pkcs11`):
 
-- `derive.go` — `C_DeriveKey`-Aufruf mit `CKM_HKDF_DERIVE`, CGO-Memory
-  für `pSalt`/`pInfo` (typisch `C.CBytes` + `C.free`), Template-Setzen
-  (`CKA_EXTRACTABLE=false`, `CKA_SIGN=true`, `CKA_VALUE_LEN=32`, …).
-- `sign.go` — `C_SignInit`/`C_Sign`-Roundtrip mit `CKM_SHA256_HMAC` auf
-  dem abgeleiteten Header-Key-Handle.
-- `hsm_test.go` — Integrationstests pro Modul (Modulpfad als
-  Env-Variable: `SPIKE_PKCS11_MODULE`, `SPIKE_PKCS11_TOKEN`,
-  `SPIKE_PKCS11_PIN`, `SPIKE_MASTER_HMAC_LABEL`). Vergleicht den
-  HSM-`C_Sign`-Output gegen `ExpectedHeaderMAC` aus `verify.go`.
+- `connect.go` — `LoadModule`, `Close`, `FindTokenSlot`,
+  `LoginUser`, `FindSecretKey`, `HasMechanism`-Pre-Flight-Check.
+- `derive.go` — `DeriveHeaderKeyHSM` mit `C_DeriveKey` +
+  `CKM_HKDF_DERIVE` + `CK_HKDF_PARAMS`-Shim, C-Memory für
+  `pSalt`/`pInfo`, Template mit `CKA_VALUE_LEN=32`.
+- `sign.go` — `SignHeaderHMAC` mit `C_SignInit`+`C_Sign`+
+  `CKM_SHA256_HMAC`.
+- `hsm_test.go` — End-to-End-Integrationstest. Skippt sauber, wenn
+  `SPIKE_PKCS11_MODULE` fehlt **oder** das Modul `CKM_HKDF_DERIVE`
+  nicht anbietet (Spike-Befund §6.1: SoftHSM 2.x + OpenCryptoki
+  haben den Mechanismus nicht). Vergleicht den HSM-`C_Sign`-Output
+  gegen `ExpectedHeaderMAC`.
