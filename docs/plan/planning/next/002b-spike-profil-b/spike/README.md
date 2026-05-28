@@ -17,14 +17,16 @@ SoftHSM + Bouncy HSM. Konventionen:
   analog zum Profil-A-Spike-Paket.
 - **Paketname:** `package profilbspike` (vermeidet Symbol-
   Kollision mit `hkdfspike` aus dem Profil-A-Spike).
-- **Imports:** Standard-Library (insbesondere `crypto/hmac` +
-  `crypto/sha256` für die Profil-B-Pure-Go-Referenz) +
-  `github.com/miekg/pkcs11` für CGO-PKCS#11-Pfade.
-  **Eigene Pure-Go-Referenz** in `verify_b.go` — die Profil-B-
-  Spec-Konstruktion (`HMAC(HMAC(HMAC(IKM, salt), info||0x01),
-  headerBytes)`) ist nicht identisch mit RFC-5869-HKDF, deshalb
-  kein Re-Use des `hkdfspike.ExpectedHeaderMAC`. Cross-Spike-
-  Import bleibt verboten.
+- **Imports:** Standard-Library + `github.com/miekg/pkcs11` für
+  CGO-PKCS#11-Pfade. **Pure-Go-Referenz wiederverwendet:**
+  `hkdfspike.ExpectedHeaderMAC` aus dem Profil-A-Spike-Paket
+  ([`../../002b-spike-hkdf/spike/verify.go`](../../002b-spike-hkdf/spike/verify.go))
+  liefert den Vergleichswert. Spec-konforme Profil-B-Konstruktion
+  ist identisch zu RFC-5869-HKDF; beide Profile produzieren
+  denselben Header-Key ([ADR 0008 §2.1](../../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)).
+  Cross-Spike-Import ist zulässig — `cgo`-Build-Tag verengt die
+  Build-Bedingungen, hindert den Import von Pure-Go-Funktionen
+  aus dem breiteren Tag-Set aber nicht.
 - **Lauf (geplant):** `make spike-profil-b-test` für die Compile-/
   Mock-Tests; `make spike-profil-b-bouncyhsm` und
   `make spike-profil-b-softhsm` für die HSM-Läufe.
@@ -44,12 +46,16 @@ SoftHSM + Bouncy HSM. Konventionen:
 ## Geplant (CGO + HSM-Pfade)
 
 - `extract.go` — `Extract(ctx, session, masterKey pkcs11.ObjectHandle,
-  salt []byte) ([]byte, error)`. Führt
-  `C_SignInit(CKM_SHA256_HMAC, masterKey)` + `C_Sign(salt)` aus.
-  **Zeroize-Owner-Vertrag:** `defer zeroize(buf)` unmittelbar nach
-  `C_Sign`; die Funktion gibt eine Kopie an den Aufrufer zurück,
-  der seinerseits `defer zeroize(prkCopy)` setzt. Damit ist der
-  Klartext nirgends „naked" über mehrere Funktionsaufrufe hinweg.
+  salt []byte) ([]byte, error)`. Realisiert die spec-konforme
+  Extract-Stufe `HMAC(salt, IKM)`. Die genaue PKCS#11-Aufruffolge
+  wird pro Modul erkundet ([ADR 0008 §2.2](../../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)):
+  Vendor-HKDF-Mechanismus (`CKM_NSS_HKDF`,
+  `CKM_SP800_108_COUNTER_KDF`, …), Salt-as-Key-Pattern via
+  `C_DeriveKey`, oder Modul-Disqualifikation für Profil B.
+  **Zeroize-Owner-Vertrag ([ADR 0008 §2.3](../../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)):**
+  `defer zeroize(buf)` steht unmittelbar nach dem HSM-Aufruf;
+  Helper ist alleiniger Owner. Aufrufer ruft `ReimportPRK` direkt
+  mit der zurückgegebenen Kopie — kein zusätzliches Zeroize.
 - `expand.go` — `Expand(ctx, session, prkHandle pkcs11.ObjectHandle,
   info []byte) ([]byte, error)`. Führt
   `C_SignInit(CKM_SHA256_HMAC, prkHandle)` + `C_Sign(info || 0x01)`
@@ -60,22 +66,19 @@ SoftHSM + Bouncy HSM. Konventionen:
   error)`. Beide rufen `C_CreateObject` mit dem CKA-Template aus
   Spike-README §3 Punkt 1 (für PRK) bzw. §3 Punkt 2 (für
   Header-Key). Pfad (a) zuerst, Pfad (b) Vendor-Variante als
-  Fallback bei `CKR_TEMPLATE_INCONSISTENT`. **Zeroize:** der
-  übergebene Buffer wird in dieser Funktion **nicht** zeroized —
-  Owner bleibt die `Extract`/`Expand`-Funktion über das
-  `defer`-Pattern.
+  Fallback bei `CKR_TEMPLATE_INCONSISTENT`. **Kein Zeroize:**
+  Owner bleibt der `Extract`/`Expand`-Helper über das
+  `defer`-Pattern; doppeltes Zeroize ist verboten
+  ([ADR 0008 §2.3](../../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)).
 - `sign_b.go` — `SignHeader(ctx, session, headerKeyHandle
   pkcs11.ObjectHandle, headerBytes []byte) ([]byte, error)`.
   `C_SignInit(CKM_SHA256_HMAC, headerKeyHandle)` +
   `C_Sign(headerBytes)`.
-- `verify_b.go` — `ExpectedHeaderMACProfileB(ikm, salt, info,
-  headerBytes []byte) []byte`. Drei nested `hmac.New(sha256.New,
-  …)` aus `crypto/hmac`. Test gegen RFC-5869-A.1 ist
-  **nicht** sinnvoll, weil die Konstruktion abweicht — stattdessen
-  ein Snapshot-Test mit eingefrorenen Hex-Werten.
 - `hsm_test.go` — End-to-End-Integrationstest. Skip wenn
-  `SPIKE_PKCS11_MODULE` fehlt (jedes ernsthafte HSM mit
-  `CKM_SHA256_HMAC` qualifiziert). Vergleicht den HSM-`C_Sign`-
-  Output gegen `ExpectedHeaderMACProfileB`. Zeroize-Check:
-  Mock-Funktion zwischen `C_Sign` und Zeroize abgreifen, nach
-  `return` der Helper-Funktion muss der Buffer null sein.
+  `SPIKE_PKCS11_MODULE` fehlt **oder** das Modul keinen
+  erkundeten Extract-Pfad bietet (siehe `extract.go`).
+  Vergleicht den HSM-`C_Sign`-Output gegen
+  `hkdfspike.ExpectedHeaderMAC` (Cross-Profil-identisch zum
+  Profil-A-Output). Zeroize-Check: Mock-Hook zwischen `C_Sign`
+  und Zeroize abgreifen, nach Rückkehr aus dem Helper muss der
+  Buffer null sein.

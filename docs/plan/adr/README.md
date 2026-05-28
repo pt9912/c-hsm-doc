@@ -24,7 +24,8 @@ geschärfte Stelle.
 | 0004 | [Runtime-Base für CGO/PKCS#11](0004-runtime-base-cgo-pkcs11.md)                       | Accepted | 2026-05-27 | [ADR 0006](0006-hkdf-profil-a-binding-und-bouncy-hsm.md) (schärft §2.6: Zweitmodul-Default OpenCryptoki → Bouncy HSM, plus HKDF-Binding-Pfad) |
 | 0005 | [Planstruktur: Open-Trigger-Lifecycle und Spike-Sub-Verzeichnisse](0005-planstruktur-open-trigger-und-spike-pattern.md) | Accepted | 2026-05-27 | —                        |
 | 0006 | [HKDF-Profil-A-Binding und Bouncy HSM als Spike-Zweitmodul](0006-hkdf-profil-a-binding-und-bouncy-hsm.md) | Accepted | 2026-05-28 | [ADR 0007](0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md) (schließt §2.2 HSM-FA-HSM-001-Lücke: Profil B als M1-Default + Profil-Wahl als Config) |
-| 0007 | [Profil B als M1-Header-HMAC-Default und konfigurierbare Profil-Wahl](0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md) | Accepted | 2026-05-28 | —                        |
+| 0007 | [Profil B als M1-Header-HMAC-Default und konfigurierbare Profil-Wahl](0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md) | Accepted | 2026-05-28 | [ADR 0008](0008-profil-b-spec-konstruktion-zeroize-owner.md) (fixiert Profil-B-Spec-Konstruktion HMAC(salt, IKM); schärft §2.1 Cross-Profil-Identität + §4 zwei Klartext-Werte + Zeroize-Owner-Vertrag via `defer`) |
+| 0008 | [Profil-B-Konstruktion gemäß HSM-FMT-006 und Zeroize-Owner-Vertrag](0008-profil-b-spec-konstruktion-zeroize-owner.md) | Accepted | 2026-05-28 | —                        |
 
 ---
 

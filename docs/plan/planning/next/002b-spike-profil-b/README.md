@@ -26,37 +26,56 @@ SoftHSM bricht im Profil-A-Pfad am Mechanism-Check ab ([Spike 002b-HKDF §6.1](.
 trägt aber Profil B vollständig — `CKM_SHA256_HMAC` ist universell.
 
 Konkrete Konstruktion gemäß
-[HSM-FMT-006 §1 Profil B](../../../../../spec/spezifikation.md):
-**zwei HMAC-SHA-256-Schritte** rekonstruieren HKDF, **danach**
-folgt der eigentliche Header-HMAC. Insgesamt drei HMAC-Operationen,
-zwei Re-Imports, zwei Zeroize-Loops:
+[HSM-FMT-006 §1 Profil B](../../../../../spec/spezifikation.md)
+(spec-konforme Argumentreihenfolge,
+[ADR 0008 §2.1](../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)):
 
-1. **HKDF-Extract** = `C_SignInit(CKM_SHA256_HMAC, master)` +
-   `C_Sign(salt)` → PRK als 32-Byte-Klartext im Server-RAM.
-   `defer zeroize(prk)` setzt **sofort** nach `C_Sign` ein
-   (Owner-Vertrag, siehe §3 Punkt 3).
+```
+PRK        = HMAC-SHA256( salt, IKM )                  # Extract
+header_key = HMAC-SHA256( PRK, info || 0x01 )          # Expand (L=32)
+tag        = HMAC-SHA256( header_key, header_bytes )   # Header-HMAC
+```
+
+**Cross-Profil-Identität:** Diese Konstruktion ist identisch mit
+RFC-5869-HKDF (L=32, ein Expand-Block). Profil A (natives
+`CKM_HKDF_DERIVE`) und Profil B (zweistufige HMAC) liefern damit
+**denselben** `header_key` über identische Inputs — der
+Pure-Go-Vergleich nutzt
+[`ExpectedHeaderMAC`](../002b-spike-hkdf/spike/verify.go) aus dem
+Profil-A-Spike-Paket für beide Profile.
+
+PKCS#11-Aufruffolge — drei HMAC-Operationen, zwei Re-Imports, zwei
+`defer zeroize`-Loops über die Helper-Funktionen aus
+[ADR 0008 §2.3](../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md):
+
+1. **Extract** = `HMAC-SHA256(salt, IKM)` realisiert per
+   PKCS#11-Aufruf, der `salt` als HMAC-Key und `IKM` als Daten
+   nutzt. Die genaue Realisierung ist Spike-Erkundungs-Material
+   ([ADR 0008 §2.2](../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)):
+   Vendor-HKDF-Mechanismus, Salt-as-Key-Pattern via `C_DeriveKey`,
+   oder Modul-Disqualifikation für Profil B. Output: PRK als
+   32-Byte-Klartext im Server-RAM. `defer zeroize(prk)` setzt
+   **sofort** nach Rückkehr aus `C_Sign`/`C_DeriveKey` ein.
 2. **PRK-Re-Import** = `C_CreateObject(CKK_GENERIC_SECRET,
    CKA_VALUE=PRK, CKA_SIGN=true, CKA_TOKEN=false,
    CKA_EXTRACTABLE=false, CKA_SENSITIVE=true,
-   CKA_MODIFIABLE=false)` → `prkHandle`.
-3. **HKDF-Expand** = `C_SignInit(CKM_SHA256_HMAC, prkHandle)` +
-   `C_Sign(info || 0x01)` → Header-Key als 32-Byte-Klartext im
-   Server-RAM. `defer zeroize(headerKey)` setzt **sofort** nach
-   `C_Sign` ein. **Wichtig:** `info || 0x01` ist die einzelne
-   HKDF-Expand-Iteration für L=32 (ein Output-Block); Bytes
-   sind die UTF-8-`HeaderHMACInfo`-Bytes gefolgt vom Counter-
-   Byte `0x01`.
-4. **Header-Key-Re-Import** = `C_CreateObject(CKK_GENERIC_SECRET,
-   CKA_VALUE=headerKey, …)` → `headerKeyHandle`. PRK-Handle
-   kann jetzt zerstört werden (`C_DestroyObject(prkHandle)`).
+   CKA_MODIFIABLE=false)` → `prkHandle`. Aufrufer übergibt den
+   `Extract`-Output direkt; der Helper-`defer`-Loop läuft am
+   Stack-Frame-Ende.
+3. **Expand** = `HMAC-SHA256(PRK, info || 0x01)` realisiert per
+   `C_SignInit(CKM_SHA256_HMAC, prkHandle)` + `C_Sign(info ||
+   0x01)`. Output: Header-Key als 32-Byte-Klartext. `defer
+   zeroize(headerKey)` setzt **sofort** nach `C_Sign` ein.
+4. **Header-Key-Re-Import** = `C_CreateObject(…, CKA_VALUE=
+   headerKey, …)` → `headerKeyHandle`. `C_DestroyObject(prkHandle)`
+   direkt danach.
 5. **Header-HMAC** = `C_SignInit(CKM_SHA256_HMAC, headerKeyHandle)`
    + `C_Sign(headerBytes)` → 32-Byte-Tag.
 6. **Cleanup:** `C_DestroyObject(headerKeyHandle)`.
 
 Beide Klartext-Werte (PRK + Header-Key) leben mikrosekunden im
-Server-RAM. Spec-Anforderung „weder PRK noch Header-Key verlässt
-das HSM" ist nur erfüllt, wenn **beide** Zeroize-Loops greifen
-(Doppel-Pflicht).
+Server-RAM und werden durch das `defer`-Pattern in `Extract`/
+`Expand` zeroized — keine Owner-Konflikte, Error-Pfad-fest.
 
 Slice 002b wird **nicht** nach `in-progress/` migriert, solange dieser
 Spike nicht grün ist.
@@ -110,34 +129,36 @@ Der Spike gilt als **grün**, wenn alle Punkte gegen **beide CI-Module**
    `C_Sign(info || 0x01)` liefert 32 Byte Header-Key-Klartext;
    `C_CreateObject(CKK_GENERIC_SECRET, CKA_VALUE=headerKey, …)`
    liefert `headerKeyHandle` (gleiche Attribut-Pflicht wie PRK).
-3. **Zeroize-Ownership (Owner = Extract/Expand-Funktion,
-   Pattern = `defer`):** Sowohl `Extract(ctx, session, masterKey,
-   salt)` als auch `Expand(ctx, session, prkHandle, info)` setzen
-   `defer zeroize(buf)` **unmittelbar** nach `C_Sign` und **vor**
-   dem `return`. Der Aufrufer sieht den Klartext nie über die
-   Funktionsgrenze hinaus. Spike-Test injiziert eine Mock-Funktion,
-   die einen Klartext-Snapshot zwischen `C_Sign` und Zeroize
-   abgreift; der Snapshot muss nach `return` Null-Bytes zeigen.
-   Kein Logging, kein Trace, kein temp-File des PRK- oder
-   Header-Key-Werts (Code-Review- + `gosec`-Gate).
+3. **Zeroize-Owner-Vertrag = Helper-`defer`-Pattern
+   ([ADR 0008 §2.3](../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)):**
+   `Extract` und `Expand` sind die alleinigen Owner ihrer
+   Klartext-Buffer. Beide allokieren den Buffer, rufen `C_Sign`
+   und setzen `defer zeroize(buf)` **unmittelbar** danach, bevor
+   sie eine Kopie an den Aufrufer zurückgeben. Der Aufrufer ruft
+   `Reimport*` direkt mit dem zurückgegebenen Buffer; nach
+   Rückkehr aus `Reimport*` läuft der `defer`-Loop am Stack-
+   Frame-Ende des Helpers — kein Klartext überlebt die Helper-
+   Grenze. Doppel-Zeroize im Aufrufer ist überflüssig (und
+   verboten, weil es Eigentümerschaft verwischt). Spike-Test
+   injiziert einen Mock-Hook zwischen `C_Sign` und Zeroize,
+   greift einen Klartext-Snapshot ab und prüft: nach Rückkehr
+   aus dem Helper ist der Buffer null. Kein Logging, kein
+   Trace, kein temp-File (Code-Review- + `gosec`-Gate).
 4. **Header-HMAC:** `C_SignInit(CKM_SHA256_HMAC, headerKeyHandle)`
    + `C_Sign(headerBytes)` liefert einen 32-Byte-HMAC. Roundtrip:
    zweimal mit identischem Input liefert byteweise identischen
    Output (Determinismus).
-5. **Pure-Go-Vergleich (profilspezifisch):** Der HSM-`C_Sign`-
+5. **Pure-Go-Vergleich (cross-profil):** Der HSM-`C_Sign`-
    Output stimmt byteweise mit
-   `ExpectedHeaderMACProfileB(FixtureIKM, salt, info, headerBytes)`
-   aus einer **eigenen** `verify_b.go` im `profilbspike`-Paket
-   überein. Die Funktion implementiert **die Spec-Konstruktion**
-   `HMAC(HMAC(HMAC(IKM, salt), info||0x01), headerBytes)` —
-   das ist **nicht** identisch mit
-   `hkdfspike.ExpectedHeaderMAC` (welches RFC-5869-HKDF nutzt).
-   **Cross-Profil-Vergleich:** Profil-A-Output (RFC-5869-HKDF)
-   und Profil-B-Output (HMAC-Konstruktion gemäß Spec) liefern
-   **unterschiedliche** Header-Keys; ein Container, der mit
-   Profil A erzeugt wurde, kann nicht mit Profil B verifiziert
-   werden (siehe ADR 0007 §2.1 Korrektur, folgt im selben PR
-   wie diese Spike-Korrektur).
+   `ExpectedHeaderMAC(FixtureIKM, salt, []byte(HeaderHMACInfo),
+   headerBytes)` aus
+   [`../002b-spike-hkdf/spike/verify.go`](../002b-spike-hkdf/spike/verify.go)
+   überein. Spec sagt `header_key = HKDF-SHA-256(...)` für beide
+   Profile; die Profil-B-Konstruktion aus §1 ist HKDF mit L=32
+   und einem Expand-Block, also identisch zum Profil-A-Output.
+   Damit gilt Cross-Profil-Identität ([ADR 0008 §2.1](../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md))
+   und ein Container, der mit Profil A erzeugt wurde, ist mit
+   Profil B verifizierbar (und umgekehrt).
 6. **Sensitive-Durchsetzung (beide Handles):** Sowohl auf
    `prkHandle` als auch auf `headerKeyHandle` liefert
    `C_GetAttributeValue(CKA_VALUE)` leeren Wert oder
@@ -163,7 +184,7 @@ docs/plan/planning/next/002b-spike-profil-b/
 │   ├── doc.go            (Paket-Doc, Build-Tag-Klammer)
 │   ├── fixture.go        (FixtureIKM + HeaderHMACInfo, synchron zu 002b-spike-hkdf)
 │   └── (geplant: extract.go, expand.go, reimport.go, sign_b.go,
-│        verify_b.go, hsm_test.go)
+│        hsm_test.go)
 └── trace/
     └── README.md         (kanonische PKCS#11-Aufruffolge; single source of truth)
 ```
@@ -178,60 +199,55 @@ Profil-B-Spike-Paket heißt `profilbspike` (analog `hkdfspike`).
 sind unverändert nutzbar — Profil B braucht nur den Master-HMAC-Key
 (vorhanden), keine zusätzlichen Mechanismen.
 
-**Pure-Go-Referenz profilspezifisch:** Der Profil-B-Pure-Go-Vergleich
-lebt in einer eigenen `verify_b.go` im `profilbspike`-Paket. Sie
-implementiert die Spec-Konstruktion
-`HMAC(HMAC(HMAC(IKM, salt), info||0x01), headerBytes)` — eigene
-Reference, **kein Re-Use** der RFC-5869-`ExpectedHeaderMAC` aus
-`hkdfspike`. Profil A und Profil B liefern unterschiedliche
-Header-Keys, weil die Spec-Konstruktion `HMAC(IKM, salt)` mit
-vertauschten Argumenten gegenüber RFC-5869-HKDF-Extract arbeitet
-(siehe §3 Punkt 5 + ADR 0007 §2.1 Korrektur). Damit entfällt auch
-ein Cross-Spike-Import — die `verify.go`-Funktion aus
-`hkdfspike` wird im Profil-B-Spike **nicht** verwendet.
+**Pure-Go-Referenz wiederverwendet:** Spec-konforme Profil-B-
+Konstruktion ist HKDF mit L=32 und einem Expand-Block, also
+identisch zum Profil-A-Output. Der Spike importiert
+`ExpectedHeaderMAC` aus
+[`../002b-spike-hkdf/spike/verify.go`](../002b-spike-hkdf/spike/verify.go)
+direkt aus dem `hkdfspike`-Paket. Cross-Spike-Import unter
+demselben Build-Tag-Set (`spike && (amd64 || arm64)`-Subset von
+`spike && cgo && (amd64 || arm64)`) ist zulässig — der `cgo`-Tag
+verengt die Build-Bedingungen, hindert aber den Import von
+Pure-Go-Funktionen aus dem breiteren Tag-Set nicht.
 
 ---
 
 ## 5. Vorgehen
 
-1. **Pure-Go-Referenz `verify_b.go`:** Eigene Funktion
-   `ExpectedHeaderMACProfileB(ikm, salt, info, headerBytes []byte)
-   []byte` mit drei nested `hmac.Sum` aus `crypto/hmac`. Test
-   gegen einen festen Hex-Dump (mit dem Fixture-IKM, einem festen
-   Salt und festen headerBytes — Snapshot beim ersten Lauf
-   eingefroren). **Kein** Import aus `hkdfspike`.
-2. **Extract gegen beide Module testen:** CGO-Helper
-   `Extract(ctx, session, masterKey, salt []byte) ([]byte, error)`,
-   der `C_SignInit(CKM_SHA256_HMAC, masterKey)` + `C_Sign(salt)`
-   ausführt. **Zeroize-Owner:** der Helper setzt `defer
-   zeroize(buf)` **unmittelbar** nach `C_Sign` und gibt eine
-   Kopie des PRK an den Aufrufer zurück, die er selbst auch
-   wieder zeroizen muss. Erst der `Reimport`-Helper macht den
-   PRK „endgültig flüchtig" durch sofortiges `C_CreateObject`.
+1. **Pure-Go-Referenz wiederverwendet:**
+   `hkdfspike.ExpectedHeaderMAC` aus dem Profil-A-Spike-Paket
+   liefert den Vergleichswert. Spec-konforme Profil-B-Konstruktion
+   ist identisch zu RFC-5869-HKDF (L=32, ein Expand-Block) —
+   beide Profile produzieren denselben Header-Key
+   ([ADR 0008 §2.1](../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)).
+2. **Extract — Spike-Erkundung pro Modul:** CGO-Helper
+   `Extract(ctx, session, masterKey, salt []byte) ([]byte,
+   error)` realisiert `HMAC(salt, IKM)`. Die genaue
+   PKCS#11-Aufruffolge ist pro Modul zu erkunden
+   ([ADR 0008 §2.2](../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)):
+   Vendor-HKDF-Mechanismus, Salt-as-Key-Pattern via `C_DeriveKey`,
+   oder Modul-Disqualifikation. **Zeroize-Owner:** Helper setzt
+   `defer zeroize(buf)` unmittelbar nach `C_Sign`/`C_DeriveKey`
+   und gibt eine Kopie an den Aufrufer zurück.
 3. **Expand gegen beide Module testen:** CGO-Helper
    `Expand(ctx, session, prkHandle, info []byte) ([]byte, error)`,
-   der `C_SignInit(CKM_SHA256_HMAC, prkHandle)` +
-   `C_Sign(info || 0x01)` ausführt. Wieder
-   `defer zeroize(buf)`-Pattern. Aufrufer übergibt das Ergebnis
-   an `ReimportHeaderKey`, der `C_CreateObject` ruft und das
-   ursprüngliche `[]byte` zeroizen lässt.
+   `C_SignInit(CKM_SHA256_HMAC, prkHandle)` + `C_Sign(info ||
+   0x01)`. Selbes `defer`-Pattern wie `Extract`.
 4. **Re-Import gegen beide Module:**
    `ReimportPRK(ctx, session, prk []byte) (handle, error)` und
    `ReimportHeaderKey(ctx, session, hk []byte) (handle, error)`
    rufen `C_CreateObject` mit dem PKCS#11-Template. Pfad (a)
    zuerst; bei `CKR_TEMPLATE_INCONSISTENT` automatisch (b)
-   probieren und pro Modul protokollieren. **Direkt nach
-   Rückkehr** aus diesen Funktionen wird der Klartext-Buffer
-   vom Aufrufer zeroized (oder besser: die `Extract`/`Expand`-
-   Funktion gibt einen Buffer zurück, dessen `defer`-Zeroize
-   am Stack-Frame-Ende greift, also nachdem der Re-Import
-   abgeschlossen ist).
+   probieren und pro Modul protokollieren. **Kein eigener
+   Zeroize-Schritt:** der Klartext-Buffer wurde von
+   `Extract`/`Expand` allokiert; deren `defer`-Loop greift am
+   Helper-Stack-Frame-Ende nach Rückkehr aus `Reimport*`.
 5. **Header-HMAC + Vergleich:**
    `SignHeader(ctx, session, headerKeyHandle, headerBytes []byte)`
    ruft `C_SignInit(CKM_SHA256_HMAC, headerKeyHandle)` +
    `C_Sign(headerBytes)`. Vergleich gegen
-   `ExpectedHeaderMACProfileB(FixtureIKM, salt,
-   []byte(HeaderHMACInfo), headerBytes)` aus `verify_b.go`.
+   `hkdfspike.ExpectedHeaderMAC(FixtureIKM, salt,
+   []byte(HeaderHMACInfo), headerBytes)`.
 6. **Sensitive-Negativtest + Cleanup:** auf beiden Handles
    (`prkHandle`, `headerKeyHandle`) und mit
    `C_DestroyObject` auf beiden.

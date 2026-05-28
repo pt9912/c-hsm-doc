@@ -281,22 +281,35 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   aktive Profil wird im Start-Log und in der Metrik
   `hsmdoc_header_hmac_profile{profile="A"|"B"}` ausgewiesen.
 
-  **Profil B (Default, M1-Pflicht):** Spec-konforme Software-HMAC-
+  **Profil B (Default, M1-Pflicht):** Spec-konforme HMAC-
   Konstruktion gemäß
-  [`HSM-FMT-006`](../../../../spec/spezifikation.md) §1 Profil B —
-  **drei** HMAC-Operationen (Extract, Expand, Header-HMAC), zwei
-  Re-Imports, zwei Zeroize-Schritte:
-  1. **HKDF-Extract:** `C_SignInit(CKM_SHA256_HMAC, master)` +
-     `C_Sign(salt)` → PRK als 32-Byte-Klartext.
+  [`HSM-FMT-006`](../../../../spec/spezifikation.md) §1 Profil B,
+  identisch zu RFC-5869-HKDF
+  ([ADR 0008 §2.1](../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)):
+  ```
+  PRK        = HMAC-SHA256( salt, IKM )                # Extract
+  header_key = HMAC-SHA256( PRK, info || 0x01 )        # Expand
+  tag        = HMAC-SHA256( header_key, header_bytes ) # Header-HMAC
+  ```
+  Profil A und Profil B liefern damit denselben `header_key` über
+  identisches Master-Material; Container sind cross-profil-
+  verifizierbar.
+
+  PKCS#11-Realisierung — sechs Schritte mit zwei Re-Imports und
+  zwei `defer`-Zeroize-Loops:
+  1. **Extract:** Realisierung pro Modul (Spike-Erkundungs-
+     material, [ADR 0008 §2.2](../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)):
+     Vendor-HKDF-Mechanismus, Salt-as-Key-Pattern via
+     `C_DeriveKey`, oder Modul-Disqualifikation. Output: PRK als
+     32-Byte-Klartext.
   2. **PRK-Re-Import:** `C_CreateObject(CKK_GENERIC_SECRET,
      CKA_VALUE=PRK, CKA_SIGN=true, CKA_TOKEN=false,
      CKA_EXTRACTABLE=false, CKA_SENSITIVE=true,
      CKA_MODIFIABLE=false)` → `prkHandle`.
-  3. **HKDF-Expand:** `C_SignInit(CKM_SHA256_HMAC, prkHandle)` +
+  3. **Expand:** `C_SignInit(CKM_SHA256_HMAC, prkHandle)` +
      `C_Sign(info || 0x01)` → Header-Key als 32-Byte-Klartext.
      `info || 0x01` ist die HKDF-Expand-Single-Block-Iteration für
-     L=32 — UTF-8-`HeaderHMACInfo`-Bytes gefolgt vom Counter
-     `0x01`.
+     L=32.
   4. **Header-Key-Re-Import:** `C_CreateObject(CKK_GENERIC_SECRET,
      CKA_VALUE=headerKey, …)` → `headerKeyHandle`.
      `C_DestroyObject(prkHandle)` direkt danach.
@@ -304,20 +317,23 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
      + `C_Sign(headerBytes)` → 32-Byte-Tag.
   6. **Cleanup:** `C_DestroyObject(headerKeyHandle)`.
 
-  **Pflicht-Invariante (ADR 0007 §4):** Sowohl der PRK- als auch
-  der Header-Key-Klartext-Buffer leben mikrosekunden im Server-
-  RAM. Beide werden über das **`defer zeroize(buf)`-Pattern in
-  den `Extract`- und `Expand`-Helpern** zeroized — Helper sind die
-  Owner, der `defer`-Loop greift am Stack-Frame-Ende
-  (also nach Rückkehr aus dem jeweiligen Re-Import). Damit ist
-  die Zeroize-Pflicht für beide Klartext-Werte deterministisch
+  **Zeroize-Owner-Vertrag ([ADR 0008 §2.3](../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)):**
+  Sowohl PRK- als auch Header-Key-Klartext-Buffer werden über
+  das **`defer zeroize(buf)`-Pattern in den Helper-Funktionen
+  `Extract` und `Expand`** zeroized. Helper sind die alleinigen
+  Owner; der `defer`-Loop greift am Stack-Frame-Ende, also nach
+  Rückkehr aus dem jeweiligen `Reimport*`. Aufrufer rufen
+  `Reimport*` direkt mit dem zurückgegebenen Buffer und zeroizen
+  **nicht** selbst (doppelt-zeroize ist verboten). Damit ist die
+  Zeroize-Pflicht für beide Klartext-Werte deterministisch
   erfüllt, auch bei Error-Pfaden (`return`, `panic`). Kein
   Logging, kein Trace, kein temp-File. Code-Review-Akzeptanz:
-  `defer zeroize(buf)` steht in `profile_b.go` direkt nach jedem
-  `C_Sign` und vor jedem weiteren Statement. Der konkrete
-  Re-Import-Mechanismus + Sensitive-Durchsetzung pro Modul wird
-  im neuen Sub-Spike unter `next/002b-spike-profil-b/`
-  validiert (siehe §Vorbedingungen Nr. 4).
+  `defer zeroize(buf)` steht in `profile_b.go` direkt nach
+  jedem HSM-Aufruf, der Klartext produziert, und vor jedem
+  weiteren Statement. Der konkrete Extract-Realisierungspfad
+  pro Modul wird im neuen Sub-Spike unter
+  `next/002b-spike-profil-b/` validiert (siehe §Vorbedingungen
+  Nr. 4).
 
   **Profil A (optional via Config, M1-Adapter-Pfad):** native HKDF
   via `C_DeriveKey(CKM_HKDF_DERIVE, CK_HKDF_PARAMS, master, template)`
@@ -335,15 +351,12 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   recyceln die Session und erhöhen eine Diagnosemetrik.
 
   **Wire-Container-Header trägt das Profil nicht.** `HSM-FMT-001`
-  ist davon unberührt. **Korrektur (Spike-Befund 2026-05-28, siehe
-  [ADR 0007 §2.1](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md)):**
-  Profil A (RFC-5869-HKDF) und Profil B (Spec-HMAC-Konstruktion)
-  liefern **unterschiedliche** Header-Keys über denselben
-  Master-HMAC-Key — ein Container, der mit Profil A erzeugt wurde,
-  ist mit Profil B nicht verifizierbar und umgekehrt. Profil-Wahl
-  ist eine deployment-weite Entscheidung. Eine Cross-Profil-
-  Migration bedingt eine Re-Encrypt-Phase oder eine Header-Format-
-  Erweiterung (eigene Folge-ADR).
+  ist davon unberührt. Profil A (natives `CKM_HKDF_DERIVE`) und
+  Profil B (spec-konforme HMAC-Konstruktion) liefern denselben
+  `header_key` über identische Inputs
+  ([ADR 0008 §2.1](../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md));
+  ein Container kann profil-übergreifend verifiziert werden,
+  solange derselbe `master_hmac_pkcs11_label` auflösbar ist.
 - **Neu:** PIN-Bezug aus externem Secret-Store
   ([`HSM-FA-HSM-002`](../../../../spec/lastenheft.md)). Slice 002b
   unterstützt genau eine produktiv zulässige Quelle:

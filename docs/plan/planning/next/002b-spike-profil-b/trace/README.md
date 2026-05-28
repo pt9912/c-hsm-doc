@@ -76,9 +76,12 @@ Reihenfolge:
     **Header-HMAC, Phase 1.**
 18. `C_Sign` mit `headerBytes` als Daten → liefert 32-Byte-
     Header-HMAC-Tag. Wert muss byteweise mit
-    `ExpectedHeaderMACProfileB(FixtureIKM, salt, info, headerBytes)`
-    aus dem profilspezifischen `verify_b.go` übereinstimmen
-    (deckt [`../README.md` §3 Punkt 5](../README.md)). **1 oder
+    `hkdfspike.ExpectedHeaderMAC(FixtureIKM, salt,
+    HeaderHMACInfo-Bytes, headerBytes)` aus dem Profil-A-Spike-
+    Paket übereinstimmen — Spec-konforme Profil-B-Konstruktion
+    liefert denselben HKDF-Output wie Profil A
+    ([ADR 0008 §2.1](../../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)).
+    Deckt [`../README.md` §3 Punkt 5](../README.md). **1 oder
     2 Aufrufe.**
 19. `C_DestroyObject(headerKeyHandle)` — **exakt 1 Aufruf.**
 20. `C_SignInit` mit `headerKeyHandle` → erwartete Antwort
@@ -104,11 +107,11 @@ Zwischen Profil-A-Spike und Profil-B-Spike unterscheiden sich:
   `C_CreateObject`-Aufrufe (PRK-Re-Import, Header-Key-Re-Import)
   ersetzt — sechs PKCS#11-Calls statt einem. Zwei Klartext-Buffer
   (`PRK`, `headerKey`) leben mikrosekunden im Server-Heap.
-- **Cross-Profil-Kompatibilität entfällt.** Profil A liefert
-  RFC-5869-HKDF, Profil B liefert die HMAC-Konstruktion gemäß
-  Spec — die Output-Werte stimmen **nicht** überein. Ein Container,
-  der mit Profil A erzeugt wurde, kann nicht mit Profil B
-  verifiziert werden und umgekehrt. ADR 0007 §2.1 wird im
-  Korrektur-PR entsprechend angepasst.
+- **Cross-Profil-Identität bleibt erhalten.** Spec-konforme
+  Profil-B-Konstruktion (`HMAC(salt, IKM)` für Extract, RFC-5869-
+  HKDF mit L=32 ein Expand-Block) liefert denselben Header-Key
+  wie Profil A. Container sind cross-profil-verifizierbar — ein
+  Profil-A-Container kann mit Profil B gelesen werden und
+  umgekehrt ([ADR 0008 §2.1](../../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)).
 - **Sonst identisch:** Find/Login/Logout/Init/Finalize sind
   spiegelbar.
