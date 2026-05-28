@@ -277,9 +277,20 @@ für das Setup):
    (Zweitmodul OpenCryptoki → Bouncy HSM) und §1 (HKDF-Binding-
    Pfad: Shim als Standard). ADR-Index-Schärfungseintrag bei
    ADR 0004 entsprechend gesetzt.
-3. Slice-002b-Plan auf Bouncy HSM als Zweitmodul aktualisieren
-   (additive Erweiterung; Plan ist noch in `next/`, nicht
-   `Accepted`).
+3. Slice-002b-Plan auf Bouncy HSM als Zweitmodul aktualisieren —
+   **abgeschlossen** (additive Erweiterung am 2026-05-28 +
+   Konsolidierungsrunde mit Profil-B-Spike-Aufnahme via
+   [ADR 0007–0010](../../../adr/)). Slice-Plan
+   [`002b-pkcs11-encrypt-hexagon.md`](../002b-pkcs11-encrypt-hexagon.md)
+   ist auf Bouncy HSM + Profil-A-Pfad-a-Shim + Profil-B-Pfad-H/K-
+   Aufspaltung gehoben; offen bleibt `HSM-FA-HSM-001`
+   (siehe ADR 0010 §2.3 und Roadmap-Status).
+
+**Spike-Status zusammengefasst (2026-05-28):** Phase 1
+(CGO-HSM-Pfade + Mechanism-Pre-Flight), Phase 2 (Bouncy-HSM-
+Setup + Live-Lauf), Make-Target und Folge-ADR alle landed.
+Slice-002b-Vorbedingung 3 ist damit abgehakt; Profil-B-Spike
+(Vorbedingung 4) hat Sub-Verzeichnis + Plan, Probe-Code folgt.
 
 ### 6.3 Closure-Vorlage (wird nach Phase 2 befüllt)
 

@@ -1,6 +1,10 @@
 # Spike — HSM-FMT-006 Profil B (Software-HMAC-Konstruktion) auf SoftHSM + Bouncy HSM
 
-**Status:** geplant (Sub-Verzeichnis angelegt, Probe-Code folgt)
+**Status:** Plan-Konsolidierung abgeschlossen (2026-05-28) — Pfad-H/K-
+Aufspaltung, Helper-Schnitt, SoftHSM-Vorbehalt und Templates fixiert
+in [ADR 0007 / 0008 / 0009 / 0010](../../../adr/). Sub-Verzeichnis +
+Fixture stehen; Probe-Code (CGO-Pfade `extract_reimport.go`,
+`expand_reimport.go`, `sign_b.go`, `hsm_test.go`) folgt.
 **Datum:** 2026-05-28
 **Bezug:**
 [Slice 002b §Vorbedingung 4](../002b-pkcs11-encrypt-hexagon.md),

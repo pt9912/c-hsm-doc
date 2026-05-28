@@ -95,6 +95,32 @@ für Slice 002b (PKCS#11-Adapter + Encrypt-Hexagon,
 [`next/002b-pkcs11-encrypt-hexagon.md`](../next/002b-pkcs11-encrypt-hexagon.md));
 geplante Folge-Slices stehen in der Slice-Tabelle unten.
 
+**Tagesabschluss 2026-05-28 (002b-Vorbedingungen):**
+- **Vorbedingung 3 — HKDF-Spike (Profil A):** abgeschlossen. Pfad
+  (a) Shim End-to-End grün gegen Bouncy HSM 2.1.0 via
+  `make spike-hkdf-bouncyhsm`; Pure-Go-Referenz gegen
+  RFC-5869 Appendix A.1 verifiziert; Folge-ADRs
+  [ADR 0006](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md)
+  `Accepted`. SoftHSM 2.6.1/2.7.0 + OpenCryptoki-Software-Token
+  ohne `CKM_HKDF_DERIVE` dokumentiert (Spike §6.1).
+- **Vorbedingung 4 — Profil-B-Spike:** Sub-Verzeichnis
+  [`next/002b-spike-profil-b/`](../next/002b-spike-profil-b/) angelegt
+  inklusive Pfad-H/Pfad-K-Aufspaltung; Probe-Code folgt. Helper-Schnitt
+  + Spec-Konstruktion + SoftHSM-Vorbehalt fixiert in
+  [ADR 0007](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md),
+  [ADR 0008](../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md),
+  [ADR 0009](../../adr/0009-profil-b-extract-reimport-helper-und-softhsm-vorbehalt.md),
+  [ADR 0010](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)
+  (alle `Accepted`).
+- **`HSM-FA-HSM-001`-Status:** offen — Bouncy HSM für Profil B
+  via Pfad H freigegeben; SoftHSM-Tragfähigkeit ist Profil-B-
+  Spike-Befund-abhängig (Pfad K mit vendor-konformem
+  Klartext-PRK-Pfad oder Modul-Disqualifikation). Lastenheft
+  verlangt Service-Start gegen SoftHSM v2 + Zweitmodul;
+  Bouncy-HSM-Doppel-Profil ist kein Ersatz. M1-Closure ist
+  blockiert bis Spike-Befund grün gegen SoftHSM oder
+  `HSM-LESE-004`-Lastenheft-Change.
+
 ---
 
 ## Meilenstein M2 – Härtung und Auditierbarkeit
@@ -251,7 +277,7 @@ wird er aus der Liste gestrichen.
 
 | Meilenstein | Status                                                                          |
 | ----------- | ------------------------------------------------------------------------------- |
-| M1          | Slices 001 + 002a in `done/`; Slice 002b in `next/` (Aktiv-Schlitz offen); M1-DoD-05/06/07 abgehakt. |
+| M1          | Slices 001 + 002a in `done/`; Slice 002b in `next/` (Aktiv-Schlitz offen); M1-DoD-05/06/07 abgehakt. **M1-Closure blockiert** durch offenen `HSM-FA-HSM-001`-Akzeptanzpunkt (siehe [Tagesabschluss 2026-05-28](#einstiegspunkt-m1) + [ADR 0010 §2.3](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)). |
 | M2          | wartet auf M1-Closure; Slice 006 (Identity-Source) in `next/` vorbereitet.       |
 | M3          | wartet auf M2-Closure und Verfügbarkeit Produktions-HSM.                        |
 | M4          | wartet auf M3-Closure.                                                          |
@@ -267,7 +293,7 @@ parallel arbeiten.
 | ----- | -------------------------------------------------- | ------------- | ------------------ | ---------------------------- |
 | 001   | [gRPC-Skeleton](../done/001-grpc-skeleton.md)      | `done`        | Akzeptanzkriterien erfüllt, Closure-Notiz im Slice-Dokument; M1-DoD-05/06 abgehakt | Closure-Commit (2026-05-27)  |
 | 002a  | [CGO-Build-Pipeline](../done/002a-cgo-build-pipeline.md) | `done`        | Akzeptanzkriterien erfüllt, Closure-Notiz im Slice-Dokument; ADR 0004 + 0005 `Accepted`; Open-Trigger 002 nach `done/` migriert; M1-DoD-07 abgehakt | Closure-Commit (2026-05-28) |
-| 002b  | [PKCS#11-Adapter + Encrypt-Hexagon](../next/002b-pkcs11-encrypt-hexagon.md) | `next`        | Encrypt-Slice (Hexagon-Schicht, PKCS#11-Adapter, Audit-Sink, Key-Registry); wartet auf Slice-002a-Closure und HKDF-Spike; trägt den fachlichen M1-Encrypt-Pfad | Plan-Commit (2026-05-27)     |
+| 002b  | [PKCS#11-Adapter + Encrypt-Hexagon](../next/002b-pkcs11-encrypt-hexagon.md) | `next`        | Vorbedingung 3 (HKDF-Spike Profil A) abgeschlossen — `make spike-hkdf-bouncyhsm` grün, [ADR 0006](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md) `Accepted`. Vorbedingung 4 (Profil-B-Spike) als Sub-Verzeichnis [`002b-spike-profil-b/`](../next/002b-spike-profil-b/) angelegt; Helper-Schnitt + Pfad-H/K + SoftHSM-Vorbehalt in [ADR 0007](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md) / [ADR 0008](../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md) / [ADR 0009](../../adr/0009-profil-b-extract-reimport-helper-und-softhsm-vorbehalt.md) / [ADR 0010](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md) `Accepted`. Probe-Code (Spike Phase 1+2) + Slice-Aktivierung offen. | Plan-Konsolidierungs-Commit (2026-05-28) |
 | 003   | Container-Codec + Decrypt                          | _ungeschnitten_ | geplant; hängt an 002b (Container-Encoder + Pro-Chunk-AAD)         | —                            |
 | 004   | Basis-Audit-Log mit Hash-Chain                     | _ungeschnitten_ | geplant                                          | —                            |
 | 005   | Helm-Chart + Kind-Smoke                            | _ungeschnitten_ | geplant; trägt Sub-Scope NetworkPolicy-Defaults aus [`offene-arbeitsfaeden.md`](offene-arbeitsfaeden.md) §5 | — |
