@@ -362,3 +362,70 @@ Bezug: `HSM-FA-FAIL-001..002` (Lastenheft), `HSM-FA-FAIL-003..009`
 - Bedrohungsmodell: Lastenheft Kapitel 13
 - Architekturentscheidungen: [docs/plan/adr/](../docs/plan/adr/)
 - Mesh-Beispiel-Manifeste je `HSM-ENV-004`-Modus: [docs/operations/mesh-examples/](../docs/operations/mesh-examples/)
+
+---
+
+## 8. Glossar
+
+Dieses Glossar erklärt die in den Architekturbildern verwendeten
+Begriffe. Fachliche Detaildefinitionen sind im Lastenheft-Glossar
+definiert (`HSM-GLOSS-001`).
+
+### 8.1 Abkürzungen
+
+| Abkürzung   | Bedeutung                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------ |
+| AAD         | Additional Authenticated Data                                                              |
+| ACK         | Acknowledgement, positive Empfangs- oder Abschlussbestätigung                              |
+| ADR         | Architecture Decision Record                                                               |
+| AEAD        | Authenticated Encryption with Associated Data                                              |
+| AES         | Advanced Encryption Standard                                                               |
+| AES-GCM     | AES im Galois/Counter Mode                                                                 |
+| AuthN       | Authentication, Feststellung der Identität                                                 |
+| AuthZ       | Authorization, Prüfung einer Berechtigung                                                  |
+| CKR         | Cryptoki Return Value, PKCS#11-Fehler- oder Statuscode                                     |
+| FS          | Filesystem                                                                                 |
+| GCM         | Galois/Counter Mode                                                                        |
+| gRPC        | Remote-Procedure-Call-Framework auf HTTP/2-Basis                                           |
+| HKDF        | HMAC-based Key Derivation Function                                                         |
+| HMAC        | Hash-based Message Authentication Code                                                     |
+| HSM         | Hardware Security Module                                                                   |
+| HW          | Hardware                                                                                   |
+| K8s         | Kubernetes                                                                                 |
+| L4          | OSI-Schicht 4, Transportebene                                                              |
+| L7          | OSI-Schicht 7, Anwendungsebene                                                             |
+| mTLS        | Mutual TLS                                                                                 |
+| NVMe        | Non-Volatile Memory Express                                                                |
+| OTel        | OpenTelemetry                                                                              |
+| PIN         | Personal Identification Number                                                             |
+| PKCS#11     | Public-Key Cryptography Standards #11, Cryptographic Token Interface                       |
+| PVC         | PersistentVolumeClaim                                                                      |
+| RPC         | Remote Procedure Call                                                                      |
+| S3          | Amazon Simple Storage Service bzw. kompatibles Object-Storage-API                          |
+| SIEM        | Security Information and Event Management                                                  |
+| TLS         | Transport Layer Security                                                                   |
+| TSA         | Time-Stamp Authority                                                                       |
+
+### 8.2 Architekturbegriffe
+
+| Begriff             | Bedeutung                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------ |
+| Adapter             | Infrastruktur- oder Protokollanbindung, die einen Port der hexagonalen Architektur erfüllt |
+| Audit-Sink          | Zielsystem oder Speicherort für Audit-Ereignisse                                           |
+| Circuit-Breaker     | Zustandsautomat, der HSM-Aufrufe bei wiederholten Fehlern temporär sperrt                  |
+| Config-Loader       | Komponente, die Konfigurationswerte aus Dateien, Umgebungsvariablen oder Plattformquellen lädt |
+| Domain-Kern         | Infrastrukturunabhängiger Kern für Stream-Orchestrierung, Chunking und Container-Codec     |
+| Driving Adapter     | Eingehender Adapter, der den Service von außen aufruft, z. B. der gRPC-Adapter             |
+| Driven Adapter      | Ausgehender Adapter, über den der Service externe Systeme nutzt, z. B. HSM oder Audit-Sink |
+| Health-Adapter      | Adapter für Liveness- und Readiness-Endpunkte                                               |
+| Key-Adapter         | Adapter für Schlüsselanlage, Rotation und HSM-Key-Lookups                                  |
+| Mesh-Sidecar        | Service-Mesh-Proxy im selben Pod wie der Service                                            |
+| OTel-Adapter        | Adapter für OpenTelemetry-Logs, -Traces und -Metriken                                      |
+| Port                | Fachliche Schnittstelle zwischen Domain-Kern und Adapter                                    |
+| Prometheus-Adapter  | Adapter, der Metriken für Prometheus bereitstellt                                          |
+| Reorder-Buffer      | Puffer, der parallel verarbeitete Chunks wieder in Stream-Reihenfolge bringt               |
+| Secret-Adapter      | Adapter für Zugriff auf Secret-Quellen wie Kubernetes Secrets oder Vault                   |
+| Service-Pod         | Kubernetes-Pod, der den `c-hsm-doc-server` und optional Mesh-Komponenten enthält           |
+| Session-Pool        | Bestand wiederverwendbarer PKCS#11-Sessions zum HSM                                        |
+| Verankerung         | Externe Absicherung der Audit-Integrität, z. B. über TSA, Rekor oder einen zweiten Log      |
+| Worker-Pool         | Begrenzte Menge paralleler Worker für Chunk-Verarbeitung und HSM-Aufrufe                   |

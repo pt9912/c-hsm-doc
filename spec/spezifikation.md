@@ -689,3 +689,92 @@ Siehe HSM-REF-001 im Lastenheft. Zusätzlich relevant für die Implementierung:
 - `github.com/miekg/pkcs11` – Go-Binding
 - OpenTelemetry Semantic Conventions
 - Prometheus Client Libraries (Go, Java)
+
+---
+
+## 15. Glossar
+
+Dieses Glossar erklärt Abkürzungen und Detailbegriffe, die in dieser
+Spezifikation verwendet werden. Fachliche Grundbegriffe sind im
+Lastenheft-Glossar definiert (`HSM-GLOSS-001`).
+
+### 15.1 Abkürzungen
+
+| Abkürzung   | Bedeutung                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------ |
+| AAD         | Additional Authenticated Data                                                              |
+| ACK         | Acknowledgement, positive Empfangs- oder Abschlussbestätigung                              |
+| ADR         | Architecture Decision Record                                                               |
+| AEAD        | Authenticated Encryption with Associated Data                                              |
+| AES         | Advanced Encryption Standard                                                               |
+| AES-GCM     | AES im Galois/Counter Mode                                                                 |
+| API         | Application Programming Interface                                                          |
+| BE          | Big Endian                                                                                 |
+| CA          | Certificate Authority                                                                      |
+| CIDR        | Classless Inter-Domain Routing                                                             |
+| CI          | Continuous Integration                                                                     |
+| CK          | Cryptoki, Namenspräfix in PKCS#11-Typen                                                    |
+| CKM         | Cryptoki Mechanism, PKCS#11-Mechanismus                                                    |
+| CKR         | Cryptoki Return Value, PKCS#11-Fehler- oder Statuscode                                     |
+| CPU         | Central Processing Unit                                                                    |
+| DN          | Distinguished Name                                                                         |
+| DRR         | Deficit Round Robin                                                                        |
+| EIO         | Input/output error                                                                         |
+| ELF         | Executable and Linkable Format                                                             |
+| Env         | Environment                                                                                |
+| FS          | Filesystem                                                                                 |
+| GCM         | Galois/Counter Mode                                                                        |
+| GiB         | Gibibyte                                                                                   |
+| gRPC        | Remote-Procedure-Call-Framework auf HTTP/2-Basis                                           |
+| HKDF        | HMAC-based Key Derivation Function                                                         |
+| HMAC        | Hash-based Message Authentication Code                                                     |
+| HSM         | Hardware Security Module                                                                   |
+| HTTP        | Hypertext Transfer Protocol                                                                |
+| ID          | Identifier                                                                                 |
+| IKM         | Input Keying Material                                                                      |
+| JAR         | Java Archive                                                                               |
+| JNI         | Java Native Interface                                                                      |
+| JSON        | JavaScript Object Notation                                                                 |
+| KDF         | Key Derivation Function                                                                    |
+| MiB         | Mebibyte                                                                                   |
+| ms          | Millisekunde                                                                               |
+| mTLS        | Mutual TLS                                                                                 |
+| NIST        | National Institute of Standards and Technology                                             |
+| NTP         | Network Time Protocol                                                                      |
+| OASIS       | Organization for the Advancement of Structured Information Standards                       |
+| OID         | Object Identifier                                                                          |
+| p99         | 99. Perzentil                                                                              |
+| PIN         | Personal Identification Number                                                             |
+| PKCS#11     | Public-Key Cryptography Standards #11, Cryptographic Token Interface                       |
+| PRK         | Pseudorandom Key                                                                           |
+| RFC         | Request for Comments                                                                       |
+| SAN         | Subject Alternative Name                                                                   |
+| SHA         | Secure Hash Algorithm                                                                      |
+| SIEM        | Security Information and Event Management                                                  |
+| SLA         | Service Level Agreement                                                                    |
+| SPIFFE      | Secure Production Identity Framework for Everyone                                          |
+| TCP         | Transmission Control Protocol                                                              |
+| TLS         | Transport Layer Security                                                                   |
+| TSA         | Time-Stamp Authority                                                                       |
+| URI         | Uniform Resource Identifier                                                                |
+| UTC         | Coordinated Universal Time                                                                 |
+| UUID        | Universally Unique Identifier                                                              |
+| WFQ         | Weighted Fair Queueing                                                                     |
+| XFCC        | X-Forwarded-Client-Cert                                                                    |
+| YAML        | YAML Ain't Markup Language                                                                 |
+
+### 15.2 Detailbegriffe
+
+| Begriff                 | Bedeutung                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| `audit-attempt`         | Commit-Punkt, an dem ein HSM-Versuch dauerhaft im Audit-Sink persistiert ist              |
+| `emit-commit`           | Commit-Punkt, an dem ein Ciphertext-Frame in den gRPC-Response-Stream geschrieben ist     |
+| `stream-final-commit`   | Commit-Punkt, an dem der Container-Trailer erfolgreich emittiert und gelesen wurde         |
+| Header-Key              | Aus dem HSM-residenten Master-HMAC-Schlüssel abgeleiteter Schlüssel für `header_hmac`      |
+| Key-ID                  | Logische Schlüsselkennung im Container-Header                                              |
+| Key-Version             | Versionszähler einer logischen Schlüsselkennung                                            |
+| Master-HMAC-Schlüssel   | Nicht extrahierbarer HSM-Schlüssel, aus dem der Header-Key abgeleitet wird                 |
+| Nonce                   | Pro AES-GCM-Operation einmaliger Wert; Detailregeln siehe `HSM-FA-ENC-004`                |
+| Reorder-Buffer          | Puffer, der parallel verarbeitete Chunks wieder in `seq`-Reihenfolge bringt               |
+| Tag-Mismatch            | Integritätsfehler bei AES-GCM-Tag-Verifikation                                             |
+| Worker-Pool             | Begrenzte Menge paralleler Worker für Chunk-Verarbeitung und HSM-Aufrufe                  |
