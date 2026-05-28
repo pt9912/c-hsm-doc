@@ -45,31 +45,38 @@ SoftHSM + Bouncy HSM. Konventionen:
 
 ## Geplant (CGO + HSM-Pfade)
 
-- `extract.go` — `Extract(ctx, session, masterKey pkcs11.ObjectHandle,
-  salt []byte) ([]byte, error)`. Realisiert die spec-konforme
-  Extract-Stufe `HMAC(salt, IKM)`. Die genaue PKCS#11-Aufruffolge
-  wird pro Modul erkundet ([ADR 0008 §2.2](../../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)):
-  Vendor-HKDF-Mechanismus (`CKM_NSS_HKDF`,
-  `CKM_SP800_108_COUNTER_KDF`, …), Salt-as-Key-Pattern via
-  `C_DeriveKey`, oder Modul-Disqualifikation für Profil B.
-  **Zeroize-Owner-Vertrag ([ADR 0008 §2.3](../../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)):**
-  `defer zeroize(buf)` steht unmittelbar nach dem HSM-Aufruf;
-  Helper ist alleiniger Owner. Aufrufer ruft `ReimportPRK` direkt
-  mit der zurückgegebenen Kopie — kein zusätzliches Zeroize.
-- `expand.go` — `Expand(ctx, session, prkHandle pkcs11.ObjectHandle,
-  info []byte) ([]byte, error)`. Führt
-  `C_SignInit(CKM_SHA256_HMAC, prkHandle)` + `C_Sign(info || 0x01)`
-  aus. Selbes Zeroize-Owner-Pattern wie `Extract`.
-- `reimport.go` — `ReimportPRK(ctx, session, prk []byte) (
-  pkcs11.ObjectHandle, error)` und
-  `ReimportHeaderKey(ctx, session, hk []byte) (pkcs11.ObjectHandle,
-  error)`. Beide rufen `C_CreateObject` mit dem CKA-Template aus
-  Spike-README §3 Punkt 1 (für PRK) bzw. §3 Punkt 2 (für
-  Header-Key). Pfad (a) zuerst, Pfad (b) Vendor-Variante als
-  Fallback bei `CKR_TEMPLATE_INCONSISTENT`. **Kein Zeroize:**
-  Owner bleibt der `Extract`/`Expand`-Helper über das
-  `defer`-Pattern; doppeltes Zeroize ist verboten
-  ([ADR 0008 §2.3](../../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)).
+- `extract_reimport.go` — `ExtractAndReimportPRK(ctx, session,
+  masterKey pkcs11.ObjectHandle, salt []byte) (pkcs11.ObjectHandle,
+  error)`. Helper-Signatur verbindlich aus
+  [ADR 0009 §2.1](../../../../adr/0009-profil-b-extract-reimport-helper-und-softhsm-vorbehalt.md);
+  interne Pfad-H/K-Aufspaltung aus
+  [ADR 0010 §2.1](../../../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md).
+  Auswahl erfolgt beim Aufbau aus der `C_GetMechanismList`-Liste:
+  - **Pfad H (Bouncy HSM, `CKM_HKDF_DERIVE` verfügbar):** ein
+    `C_DeriveKey(CKM_HKDF_DERIVE, extractParams={bExtract=true,
+    bExpand=false, salt, info=nil}, masterKey, prkTemplate)`.
+    Kein Klartext-Buffer, kein internes `C_CreateObject`, kein
+    `defer zeroize`. PRK-Template setzt `CKA_DERIVE=true`,
+    `CKA_SIGN=false` (siehe ADR 0010 §2.1).
+  - **Pfad K (Modul ohne HKDF-Derive, vendor-konformer Klartext-
+    Pfad):** lokaler `prk := make([]byte, 32)` + `defer zeroize(prk)`
+    + vendor-konforme `HMAC(salt, IKM)`-Erzeugung + internes
+    `C_CreateObject(CKA_VALUE=prk, prkTemplate)`. Aufrufer sieht
+    ausschließlich `prkHandle` und kann den Klartext nirgends
+    abgreifen.
+- `expand_reimport.go` — `ExpandAndReimportHeaderKey(ctx, session,
+  prkHandle pkcs11.ObjectHandle, info []byte) (pkcs11.ObjectHandle,
+  error)`. Selbes Pfad-H/K-Pattern:
+  - **Pfad H:** ein `C_DeriveKey(CKM_HKDF_DERIVE,
+    expandParams={bExtract=false, bExpand=true, salt=nil, info},
+    prkHandle, headerKeyTemplate)`. Header-Key-Template setzt
+    `CKA_SIGN=true`, `CKA_DERIVE=false`.
+  - **Pfad K:** `C_SignInit(CKM_SHA256_HMAC, prkHandle)` +
+    `C_Sign(info || 0x01)` + internes `C_CreateObject(
+    CKA_VALUE=headerKey, headerKeyTemplate)` mit demselben
+    `defer zeroize`-Pattern wie in `ExtractAndReimportPRK` Pfad K.
+  Aufrufer ist verpflichtet, `C_DestroyObject(prkHandle)` nach
+  Rückkehr auszuführen (für beide Pfade).
 - `sign_b.go` — `SignHeader(ctx, session, headerKeyHandle
   pkcs11.ObjectHandle, headerBytes []byte) ([]byte, error)`.
   `C_SignInit(CKM_SHA256_HMAC, headerKeyHandle)` +

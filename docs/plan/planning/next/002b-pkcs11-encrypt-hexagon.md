@@ -19,15 +19,23 @@ emittiert einen formatkonformen Container
 Header-HMAC-Konstruktion ist **konfigurierbar** über
 `HSMDOC_HEADER_HMAC_PROFILE` ∈ `{A, B}`, Default **B** (siehe
 [ADR 0007](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md)).
-Profil B (Software-HMAC-Konstruktion mit `CKM_SHA256_HMAC` + PRK-
-Re-Import gemäß HSM-FMT-006 §1 Profil B) ist universell auf SoftHSM v2
-**und** Bouncy HSM 2.x lauffähig und trägt damit die
-`HSM-FA-HSM-001`-Akzeptanz. Profil A (native HKDF via `CKM_HKDF_DERIVE`,
+Profil B (spec-konforme HMAC-Konstruktion gemäß HSM-FMT-006 §1
+Profil B) ist auf Bouncy HSM 2.x freigegeben (`CKM_HKDF_DERIVE`
+deckt die `HMAC(salt, IKM)`-Realisation ab,
+[ADR 0009 §5](../../adr/0009-profil-b-extract-reimport-helper-und-softhsm-vorbehalt.md)).
+SoftHSM-Tragfähigkeit für Profil B ist **Spike-Befund-abhängig**
+([ADR 0009 §2.2](../../adr/0009-profil-b-extract-reimport-helper-und-softhsm-vorbehalt.md)) —
+die `HMAC(salt, IKM)`-Stufe mit nicht-extrahierbarem IKM ist über
+`CKM_SHA256_HMAC` allein nicht realisierbar, sondern braucht einen
+Vendor-Mechanismus oder ein Salt-as-Key-Pattern. `HSM-FA-HSM-001`
+bleibt damit offener M1-Akzeptanzpunkt bis zum Profil-B-Spike-
+Befund. Profil A (native HKDF via `CKM_HKDF_DERIVE`,
 [ADR 0006 §2.1](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md)
 Pfad-(a)-Shim) bleibt als optionale Alternative für HKDF-fähige
 Module — in M1: Bouncy HSM, in M3: pro Vendor-HSM nach eigener
 Validierung. SoftHSM v2 trägt weiterhin die nicht-HKDF-Pfade
-(AES-GCM, Sessions, Key-Lifecycle, Failure-Smoke).
+(AES-GCM, Sessions, Key-Lifecycle, Failure-Smoke), unabhängig von
+der Profil-Frage.
 
 Dieser Slice ist der fachliche Kern von M1: er etabliert die
 hexagonale Domain-Schicht, den ersten driven Adapter, den durablen
@@ -259,15 +267,30 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   PKCS#11-Abhängigkeiten.
 - **Neu:** Mechanismus-Check
   ([`HSM-FA-HSM-005`](../../../../spec/spezifikation.md), geschärft
-  durch [ADR 0007 §2.4](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md)):
-  Pflicht-Mechanismen werden **je aktivem Profil** geprüft:
-  - Profil B (Default): `CKM_AES_GCM` + `CKM_SHA256_HMAC`.
-  - Profil A (Config): `CKM_AES_GCM` + `CKM_HKDF_DERIVE` +
+  durch [ADR 0007 §2.4](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md)
+  + [ADR 0010 §2.1](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)):
+  Pflicht-Mechanismen werden **je aktivem Profil** geprüft, für
+  Profil B zusätzlich **pfad-spezifisch**:
+  - **Profil A (Config):** `CKM_AES_GCM` + `CKM_HKDF_DERIVE` +
     `CKM_SHA256_HMAC`.
+  - **Profil B Pfad H (Bouncy HSM):** `CKM_AES_GCM` +
+    `CKM_HKDF_DERIVE` + `CKM_SHA256_HMAC`. `CKM_HKDF_DERIVE` ist
+    Pflicht, weil sowohl Extract als auch Expand über einen
+    HKDF-Derive-Aufruf laufen
+    ([ADR 0010 §2.1 Pfad H](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)).
+  - **Profil B Pfad K (modul-registriert):** `CKM_AES_GCM` +
+    der für das aktive Modul registrierte vendor-konforme
+    Pfad-K-Mechanismus + `CKM_SHA256_HMAC`. Die
+    Pfad-K-Mechanismus-Liste pro Modul wird im Profil-B-Spike-
+    Befund pro Modul festgelegt und im Adapter-Code als Konstante
+    eingetragen.
   Fehlt ein Pflicht-Mechanismus, bricht der Server mit
-  `STARTUP_HSM_MECHANISM_MISSING` ab. Die Log-Zeile nennt fehlenden
-  Mechanismus + aktives Profil — ein Profil-Wechsel oder Modul-
-  Wechsel ist direkt aus dem Log ableitbar.
+  `STARTUP_HSM_MECHANISM_MISSING` ab. Die Log-Zeile nennt
+  fehlenden Mechanismus, aktives Profil **und** Pfad — ein
+  Profil-Wechsel, Pfad-Wechsel oder Modul-Wechsel ist direkt aus
+  dem Log ableitbar. Reines `CKM_SHA256_HMAC` allein ist kein
+  hinreichender Profil-B-Mechanismus-Satz; der frühere
+  Slice-Plan-Text war zu lax.
 - **Neu:** HeaderMAC-Port-Implementierung
   ([`HSM-FMT-006`](../../../../spec/spezifikation.md),
   [ADR 0007](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md)).
@@ -295,45 +318,72 @@ Profilwahl ist HSM-Sache und wohnt im PKCS#11-Adapter.
   identisches Master-Material; Container sind cross-profil-
   verifizierbar.
 
-  PKCS#11-Realisierung — sechs Schritte mit zwei Re-Imports und
-  zwei `defer`-Zeroize-Loops:
-  1. **Extract:** Realisierung pro Modul (Spike-Erkundungs-
-     material, [ADR 0008 §2.2](../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)):
-     Vendor-HKDF-Mechanismus, Salt-as-Key-Pattern via
-     `C_DeriveKey`, oder Modul-Disqualifikation. Output: PRK als
-     32-Byte-Klartext.
-  2. **PRK-Re-Import:** `C_CreateObject(CKK_GENERIC_SECRET,
-     CKA_VALUE=PRK, CKA_SIGN=true, CKA_TOKEN=false,
-     CKA_EXTRACTABLE=false, CKA_SENSITIVE=true,
-     CKA_MODIFIABLE=false)` → `prkHandle`.
-  3. **Expand:** `C_SignInit(CKM_SHA256_HMAC, prkHandle)` +
-     `C_Sign(info || 0x01)` → Header-Key als 32-Byte-Klartext.
-     `info || 0x01` ist die HKDF-Expand-Single-Block-Iteration für
-     L=32.
-  4. **Header-Key-Re-Import:** `C_CreateObject(CKK_GENERIC_SECRET,
-     CKA_VALUE=headerKey, …)` → `headerKeyHandle`.
-     `C_DestroyObject(prkHandle)` direkt danach.
-  5. **Header-HMAC:** `C_SignInit(CKM_SHA256_HMAC, headerKeyHandle)`
-     + `C_Sign(headerBytes)` → 32-Byte-Tag.
-  6. **Cleanup:** `C_DestroyObject(headerKeyHandle)`.
+  PKCS#11-Realisierung über **zwei kombinierte Helper** aus
+  [ADR 0009 §2.1](../../adr/0009-profil-b-extract-reimport-helper-und-softhsm-vorbehalt.md),
+  geschärft durch
+  [ADR 0010 §2.1](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md):
+  Helper-Signaturen sind verbindlich, die **interne Realisation
+  splittet** in **Pfad H** (Native-Derive, Handle direkt) und
+  **Pfad K** (Klartext-Reimport mit `defer zeroize`). Auswahl pro
+  Modul über `C_GetMechanismList`; kein Vendor-String im
+  Adapter-Code.
 
-  **Zeroize-Owner-Vertrag ([ADR 0008 §2.3](../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)):**
-  Sowohl PRK- als auch Header-Key-Klartext-Buffer werden über
-  das **`defer zeroize(buf)`-Pattern in den Helper-Funktionen
-  `Extract` und `Expand`** zeroized. Helper sind die alleinigen
-  Owner; der `defer`-Loop greift am Stack-Frame-Ende, also nach
-  Rückkehr aus dem jeweiligen `Reimport*`. Aufrufer rufen
-  `Reimport*` direkt mit dem zurückgegebenen Buffer und zeroizen
-  **nicht** selbst (doppelt-zeroize ist verboten). Damit ist die
-  Zeroize-Pflicht für beide Klartext-Werte deterministisch
-  erfüllt, auch bei Error-Pfaden (`return`, `panic`). Kein
-  Logging, kein Trace, kein temp-File. Code-Review-Akzeptanz:
-  `defer zeroize(buf)` steht in `profile_b.go` direkt nach
-  jedem HSM-Aufruf, der Klartext produziert, und vor jedem
-  weiteren Statement. Der konkrete Extract-Realisierungspfad
-  pro Modul wird im neuen Sub-Spike unter
-  `next/002b-spike-profil-b/` validiert (siehe §Vorbedingungen
-  Nr. 4).
+  1. **`ExtractAndReimportPRK(ctx, session, masterKey, salt)`** →
+     `prkHandle`.
+     - **Pfad H (Native-Derive, Bouncy HSM):**
+       `C_DeriveKey(CKM_HKDF_DERIVE, extractParams, masterKey,
+       prkTemplate)` → `prkHandle` direkt. **Kein Klartext-Buffer,
+       kein `C_CreateObject`, kein `defer zeroize`.**
+     - **Pfad K (Klartext-Reimport, nur unter Compliance-Vorbehalt):**
+       lokaler `prk := make([]byte, 32)` + `defer zeroize(prk)` +
+       modulabhängige `HMAC(salt, IKM)`-Aufruffolge + internes
+       `C_CreateObject(CKA_VALUE=prk, …)`. Nur zulässig, wenn der
+       vendor-konforme Pfad die Nicht-Export-Garantie aus
+       HSM-FMT-006 hält
+       ([ADR 0010 §2.1 Pfad K](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)).
+       Findet der Spike keinen solchen Pfad → Modul nicht
+       freigegeben.
+  2. **`ExpandAndReimportHeaderKey(ctx, session, prkHandle, info)`**
+     → `headerKeyHandle`. Analoge Pfad-H/Pfad-K-Aufspaltung; bei
+     Bouncy HSM via `CKM_HKDF_DERIVE` mit `prkHandle` als
+     Base-Key.
+  3. `C_DestroyObject(prkHandle)` direkt nach Schritt 2.
+  4. **Header-HMAC:** `C_SignInit(CKM_SHA256_HMAC, headerKeyHandle)`
+     + `C_Sign(headerBytes)` → 32-Byte-Tag.
+  5. **Cleanup:** `C_DestroyObject(headerKeyHandle)`.
+
+  **Zeroize-Owner-Vertrag (pfad-spezifisch,
+  [ADR 0010 §2.2](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)):**
+  - **Pfad H** allokiert keinen Klartext-Buffer — kein
+    Zeroize-Schritt erforderlich. Code-Review-Akzeptanz: H-Pfad
+    enthält **keine** `make([]byte, 32)`/`C_Sign`/`C_CreateObject`-
+    Sequenz.
+  - **Pfad K** folgt dem `defer zeroize`-Pattern aus
+    [ADR 0009 §2.1](../../adr/0009-profil-b-extract-reimport-helper-und-softhsm-vorbehalt.md):
+    Klartext-Buffer lokal im Helper, `defer zeroize(buf)`
+    unmittelbar nach Klartext-Erzeugung, internes `C_CreateObject`
+    danach, `defer` läuft am Stack-Frame-Ende. Aufrufer sieht
+    den Klartext nirgends.
+
+  Code-Review-Akzeptanz: `profile_b.go` exportiert **keine**
+  separaten `Extract`/`ReimportPRK`-Funktionen; die kombinierten
+  Helper sind verbindlich. `profile_a.go` und der H-Pfad in
+  `profile_b.go` rufen denselben PKCS#11-Aufruf
+  (`C_DeriveKey(CKM_HKDF_DERIVE)`); eine interne gemeinsame
+  Funktion (`deriveHKDF(...)`) ist additiv zulässig, die Adapter-
+  API aus ADR 0009 §2.1 bleibt aber stehen
+  ([ADR 0010 §4 Pflege](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)).
+
+  **SoftHSM-Status klargestellt
+  ([ADR 0009 §2.2](../../adr/0009-profil-b-extract-reimport-helper-und-softhsm-vorbehalt.md)
+  + [ADR 0010 §2.3](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)):**
+  SoftHSM hat keinen HKDF-Derive-Mechanismus → Pfad H ist nicht
+  verfügbar. Pfad K gegen SoftHSM ist Spike-Erkundungs-Material;
+  ohne vendor-konformen Klartext-PRK-Erzeugungspfad ist SoftHSM
+  für Profil B nicht freigegeben. Bouncy HSM hat
+  `CKM_HKDF_DERIVE` (Pfad H) und ist freigegeben.
+  `HSM-FA-HSM-001` ist damit **nicht erfüllt** — offen bis zum
+  Spike-Befund oder Lastenheft-Change.
 
   **Profil A (optional via Config, M1-Adapter-Pfad):** native HKDF
   via `C_DeriveKey(CKM_HKDF_DERIVE, CK_HKDF_PARAMS, master, template)`
@@ -898,8 +948,12 @@ Folge-Slices erweitern denselben Abschnitt additiv.
 - `HSMDOC_HEADER_HMAC_PROFILE` — `A` oder `B`, Default `B`
   ([ADR 0007 §2.1](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md)).
   Bestimmt, welcher HeaderMAC-Adapter aktiv ist:
-  - `B`: Software-HMAC-Konstruktion (universell;
-    SoftHSM + Bouncy HSM tragen das gleichermaßen, M1-Default).
+  - `B`: spec-konforme HMAC-Konstruktion (HSM-FMT-006 Profil B).
+    Verlangt ein Modul mit einem Pfad für `HMAC(salt, IKM)` auf
+    nicht-extrahierbarem IKM — Bouncy HSM 2.x ist freigegeben
+    (via `CKM_HKDF_DERIVE`); SoftHSM ist Spike-Befund-abhängig
+    ([ADR 0009 §2.2](../../adr/0009-profil-b-extract-reimport-helper-und-softhsm-vorbehalt.md)),
+    M1-Default.
   - `A`: native HKDF via `CKM_HKDF_DERIVE` + `CK_HKDF_PARAMS`-Shim
     aus [ADR 0006 §2.1](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md).
     Verlangt ein Modul mit `CKM_HKDF_DERIVE` (in M1: Bouncy HSM).
@@ -1107,47 +1161,79 @@ Die Spike-Vorbedingung 3 (Profil-A-Spike) ist **abgeschlossen**:
   implementieren `CKM_HKDF_DERIVE` nicht
   ([Spike §6.1](002b-spike-hkdf/README.md)).
 
-**`HSM-FA-HSM-001`-Lücke geschlossen durch
-[ADR 0007](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md):**
-Profil B (Software-HMAC-Konstruktion mit `CKM_SHA256_HMAC` + PRK-Re-
-Import gemäß HSM-FMT-006 §1 Profil B) wird M1-Default. Profil-Wahl
-ist serverseitig konfigurierbar (`HSMDOC_HEADER_HMAC_PROFILE`); der
-Mechanism-Check prüft nur die Mechanismen des aktiven Profils.
-SoftHSM bedient Profil B, Bouncy HSM bedient Profil B oder A.
-Service-Start gegen beide Module ohne Codeänderung → `HSM-FA-HSM-001`
-erfüllbar. Profil B-Implementierungsdetails (Re-Import-Template,
-Zeroize, Sensitive-Durchsetzung pro Modul) leben in der neuen
-**Vorbedingung 4** (siehe unten).
+**`HSM-FA-HSM-001`-Status (geschärft durch ADR 0008 + ADR 0009):**
+ADR 0007 hatte die Lücke als „geschlossen" markiert. ADR 0008 §2.1
+korrigiert die Konstruktion auf die spec-konforme Form
+`HMAC(salt, IKM)` für Extract und `HMAC(PRK, info||0x01)` für
+Expand. ADR 0009 §2.2 zieht die ursprüngliche SoftHSM-
+Pauschalaussage zurück: SoftHSM ist für Profil B **nur dann**
+freigegeben, wenn der Profil-B-Spike eine spec-konforme
+`HMAC(salt, IKM)`-Realisation mit nicht-extrahierbarem IKM findet
+(Vendor-Mechanismus oder Salt-as-Key-Pattern via `C_DeriveKey`).
+Bouncy HSM ist freigegeben (`CKM_HKDF_DERIVE` deckt den Extract-Pfad
+ab). Bis zum Spike-Befund bleibt `HSM-FA-HSM-001` damit offener
+M1-Akzeptanzpunkt. Profil-Wahl ist serverseitig konfigurierbar
+(`HSMDOC_HEADER_HMAC_PROFILE`); der Mechanism-Check prüft nur die
+Mechanismen des aktiven Profils.
 
 ### Vorbedingung 4 — Profil-B-Spike (offen)
 
 Vor Slice-002b-Aktivierung muss der Profil-B-Pfad gegen **beide
-CI-Module** (SoftHSM v2 und Bouncy HSM 2.x) validiert sein. Der
+CI-Module** (SoftHSM v2 und Bouncy HSM 2.x) erkundet sein. Der
 Spike läuft analog zum Profil-A-Spike als Sub-Verzeichnis
 `docs/plan/planning/next/002b-spike-profil-b/`
 ([ADR 0005 §2.2](../../adr/0005-planstruktur-open-trigger-und-spike-pattern.md)
 legitimiert das Pattern). Ziel:
 
-1. **Extract-Pfad:** `C_SignInit(CKM_SHA256_HMAC, master)` +
-   `C_Sign(salt)` → PRK als 32-Byte-Klartext im Server-RAM.
-2. **Re-Import-Pfad:** `C_CreateObject(CKK_GENERIC_SECRET,
-   CKA_VALUE=PRK, CKA_SIGN=true, CKA_TOKEN=false,
-   CKA_EXTRACTABLE=false, CKA_SENSITIVE=true)` → Header-Key-Handle.
-3. **Zeroize-Pfad:** PRK-`[]byte` wird **unmittelbar** nach dem
-   `C_CreateObject` zeroized. Spike-Test belegt die Zeroize-Invariante.
-4. **Header-HMAC-Pfad:** `C_SignInit(CKM_SHA256_HMAC, headerKey)` +
-   `C_Sign(headerBytes)` → 32-Byte-Tag.
-5. **Pure-Go-Vergleich:** identisch zum Profil-A-Spike (RFC-5869-
-   Referenz aus `spike/verify.go` wiederverwendbar; Bouncy HSM
-   Profil-B-Output muss byteweise identisch zu Profil-A-Output sein,
-   weil beide HKDF-konstrukte über denselben Master-IKM + Salt +
-   Info dasselbe PRK + Header-Key erzeugen).
+1. **`ExtractAndReimportPRK` liefert `prkHandle`** (Helper-Schnitt
+   verbindlich aus
+   [ADR 0009 §2.1](../../adr/0009-profil-b-extract-reimport-helper-und-softhsm-vorbehalt.md),
+   interne Pfad-H/K-Aufspaltung aus
+   [ADR 0010 §2.1](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)):
+   - **Pfad H (Bouncy HSM):** ein `C_DeriveKey(CKM_HKDF_DERIVE,
+     extractParams, masterKey, prkTemplate)` mit `bExtract=true,
+     bExpand=false` und PRK-Template (`CKA_DERIVE=true`,
+     `CKA_SIGN=false`, restliche Bits gemäß ADR 0010 §2.1). Kein
+     Klartext-PRK, kein internes `C_CreateObject`, kein Zeroize.
+   - **Pfad K (Spike-Erkundung pro Modul):** vendor-konformer
+     Klartext-PRK-Pfad + internes `C_CreateObject(CKA_VALUE=PRK,
+     prkTemplate)` mit demselben PRK-Template. Nur zulässig, wenn
+     Modul-Befund die Nicht-Export-Garantie hält.
+2. **`ExpandAndReimportHeaderKey` liefert `headerKeyHandle`**:
+   - **Pfad H (Bouncy HSM):** ein `C_DeriveKey(CKM_HKDF_DERIVE,
+     expandParams, prkHandle, headerKeyTemplate)` mit
+     `bExtract=false, bExpand=true` und Header-Key-Template
+     (`CKA_SIGN=true`, `CKA_DERIVE=false`). Kein Klartext-Header-
+     Key, kein internes `C_CreateObject`, kein Zeroize.
+   - **Pfad K:** `C_SignInit(CKM_SHA256_HMAC, prkHandle)` +
+     `C_Sign(info || 0x01)` + internes `C_CreateObject(
+     CKA_VALUE=headerKey, headerKeyTemplate)`.
+3. **Zeroize-Pfad (nur Pfad K):** `defer zeroize(buf)` läuft am
+   Stack-Frame-Ende beider Helper, **nach** dem internen
+   `C_CreateObject`. Spike-Test belegt die Invariante über einen
+   Mock-Hook zwischen Klartext-Erzeugung und `C_CreateObject`.
+   **Pfad H** allokiert keinen Klartext-Buffer; Code-Review-
+   Akzeptanz: keine `make([]byte, …)` / `C_Sign` /
+   `C_CreateObject(CKA_VALUE=…)`-Sequenz im H-Pfad.
+4. **Header-HMAC-Pfad:** `C_SignInit(CKM_SHA256_HMAC,
+   headerKeyHandle)` + `C_Sign(headerBytes)` → 32-Byte-Tag.
+   Gleicher Aufruf in beiden Pfaden.
+5. **Pure-Go-Vergleich (cross-profil):** Spec-konforme Profil-B-
+   Konstruktion ist identisch zu RFC-5869-HKDF
+   ([ADR 0008 §2.1](../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)).
+   `hkdfspike.ExpectedHeaderMAC` aus dem Profil-A-Spike-Paket
+   liefert den Vergleichswert für **beide** Profile und **beide**
+   Pfade.
 6. **Sensitive-Durchsetzung:** `C_GetAttributeValue(CKA_VALUE)` auf
-   dem Header-Key → leerer Wert oder `CKR_ATTRIBUTE_SENSITIVE`
-   (analog Spike-Trace-Sequenz Schritt 7).
-7. **Modul-spezifische Quirks:** Re-Import-Template-Variationen
-   (`CKA_DERIVE`-Bedarf, Modul-spezifische CKK-Werte) werden pro
-   Modul dokumentiert.
+   `prkHandle` und `headerKeyHandle` → leerer Wert oder
+   `CKR_ATTRIBUTE_SENSITIVE`. Greift auf beiden Pfaden gleich.
+7. **Modul-spezifische Quirks:** Pro Modul wird der gewählte
+   Pfad (H oder K), das Pfad-spezifische Template, die
+   Mechanismus-Liste und ggf. der vendor-konforme Klartext-PRK-
+   Erzeugungspfad dokumentiert. Findet der Spike für SoftHSM
+   weder Pfad H noch einen vendor-konformen Pfad K → SoftHSM
+   ist für Profil B nicht freigegeben und `HSM-FA-HSM-001`
+   bleibt offen (eigene Folge-ADR).
 
 Sub-Verzeichnis-Layout, Build-Tag (`profilbspike`), Make-Target
 (`make spike-profil-b-test` / `make spike-profil-b-bouncyhsm` /
@@ -1473,29 +1559,58 @@ wird **nicht** ohne Profil-B-Spike-Output aktiviert.
       bleibt stabil, nur der Name ändert sich. Die Allowlist-
       Begründung wird im Commit dokumentiert und mit dem
       Slice-001-Konsumenten-Nullstand belegt.
-- **HKDF-Profil-A-Non-Export** ([`HSM-FMT-006`](../../../../spec/spezifikation.md)):
-  Tests gegen SoftHSM v2 und das zweite OSS-Modul belegen die
-  Nicht-Extrahierbarkeit:
+- **HKDF-Non-Export-Pflicht je aktivem Profil + Pfad**
+  ([`HSM-FMT-006`](../../../../spec/spezifikation.md);
+  Module-Matrix aus
+  [ADR 0006](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md)
+  + [ADR 0010 §2.1](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)):
+  Tests laufen nur gegen Modul-/Profil-/Pfad-Kombinationen, die
+  laut Adapter-Akzeptanz freigegeben sind — Profil A gegen
+  SoftHSM ist absichtlich kein Testpfad (Mechanism-Check würde
+  abbrechen, siehe §HSM-FA-HSM-001 Vendor-Smoke oben).
+  Konkrete CI-Pfade:
+  - **Profil A gegen Bouncy HSM** (Pfad-a-Shim aus ADR 0006).
+  - **Profil B Pfad H gegen Bouncy HSM** (`CKM_HKDF_DERIVE`
+    zweimal, siehe ADR 0010 §2.1).
+  - **Profil B Pfad K gegen SoftHSM** (nur wenn der Profil-B-
+    Spike einen vendor-konformen Pfad K nachweist; sonst entfällt).
+
+  In allen aktivierten Pfaden gelten dieselben Non-Export-
+  Akzeptanzkriterien:
   - `C_GetAttributeValue` für `CKA_EXTRACTABLE` liefert `false` auf
-    Master-HMAC-Key und auf dem via `CKM_HKDF_DERIVE` erzeugten
-    Header-Key-Handle; `CKA_SENSITIVE=true` ebenso.
-  - Ein expliziter `C_WrapKey`-Versuch auf beide Handles schlägt
+    Master-HMAC-Key und auf allen abgeleiteten Handles (`prkHandle`
+    in Pfad H/K, `headerKeyHandle` in beiden Pfaden);
+    `CKA_SENSITIVE=true` ebenso.
+  - Ein expliziter `C_WrapKey`-Versuch auf alle Handles schlägt
     mit `CKR_KEY_UNEXTRACTABLE` fehl.
   - Code-Inspektion (statischer Check + Code-Review-Akzeptanz):
     Adapter-Code enthält keine HMAC-/HKDF-Software-Implementierung;
     `grep -E "hmac\.New|hkdf\."` im PKCS#11-Adapter ergibt keine
-    Treffer. Header-Key wird ausschließlich via `C_DeriveKey`
-    erzeugt und via `C_SignInit`/`C_Sign` benutzt.
+    Treffer. Header-Key-Erzeugungspfad ist pfadspezifisch:
+    - **Profil A + Profil B Pfad H:** ausschließlich `C_DeriveKey`
+      (`CKM_HKDF_DERIVE`).
+    - **Profil B Pfad K:** `C_SignInit`/`C_Sign` auf dem
+      Master-/PRK-Handle plus internes `C_CreateObject(
+      CKA_VALUE=…)` — der zwischenzeitliche Klartext-Buffer fällt
+      unter den Zeroize-Owner-Vertrag (siehe Profil-B-Zeroize-
+      Invariante).
+    Die Nutzung des finalen `headerKeyHandle` ist in beiden
+    Pfaden identisch: `C_SignInit`/`C_Sign(CKM_SHA256_HMAC)`.
   - PKCS#11-Trace-Test zeigt, dass der Header-Key nie als Klartext
     in einem `C_GetAttributeValue`- oder `C_WrapKey`-Returnwert
     auftaucht.
-- **Header-Key-Lifecycle:** PKCS#11-Trace- und Objektzählungs-Test
-  zeigen pro HeaderMAC-Aufruf: `C_DeriveKey` erzeugt einen
-  session-ephemeren Header-Key mit `CKA_CLASS=CKO_SECRET_KEY`,
-  `CKA_SIGN=true`, `CKA_TOKEN=false`, `CKA_EXTRACTABLE=false`,
-  `CKA_SENSITIVE=true`; nach `C_Sign` folgt `C_DestroyObject`. Nach
-  1000 Encrypt-Streams steigt die Anzahl persistenter Token-Objekte
-  nicht.
+- **Header-Key-Lifecycle (pfad-spezifisch):** PKCS#11-Trace- und
+  Objektzählungs-Test zeigen pro HeaderMAC-Aufruf:
+  - **Profil A + Profil B Pfad H:** `C_DeriveKey(CKM_HKDF_DERIVE)`
+    erzeugt den session-ephemeren Header-Key.
+  - **Profil B Pfad K:** `C_CreateObject(CKA_VALUE=headerKey,
+    headerKeyTemplate)` erzeugt das session-ephemere Handle
+    nach interner `HMAC(prk, info||0x01)`-Berechnung.
+  In beiden Pfaden trägt der Header-Key das Template
+  `CKA_CLASS=CKO_SECRET_KEY`, `CKA_SIGN=true`, `CKA_TOKEN=false`,
+  `CKA_EXTRACTABLE=false`, `CKA_SENSITIVE=true`; nach `C_Sign`
+  folgt `C_DestroyObject`. Nach 1000 Encrypt-Streams steigt die
+  Anzahl persistenter Token-Objekte nicht.
 - **Session-affine KeyRef-Auflösung:** Test mit Pool-Größe ≥ 2 und
   erzwungenem Session-Wechsel zwischen HeaderMAC und ChunkSealer
   zeigt: `KeyRef` transportiert nur den logischen Snapshot, raw
@@ -1562,44 +1677,90 @@ wird **nicht** ohne Profil-B-Spike-Output aktiviert.
   - Repo-Audit: Key-Registry-Datei enthält weder Klartext-Schlüssel
     noch Wrap-Keys (HSM-FA-KEY-004 Akzeptanz).
 - **HSM-FA-HSM-001 Vendor-Smoke** ([`HSM-FA-HSM-001`](../../../../spec/lastenheft.md)):
-  CI führt drei Smoke-Pfade ohne Codeänderung
-  ([ADR 0007 §3](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md)):
-  - `HSMDOC_HEADER_HMAC_PROFILE=B` gegen SoftHSM v2 (Pflicht-
-    Akzeptanz für `HSM-FA-HSM-001`),
-  - `HSMDOC_HEADER_HMAC_PROFILE=B` gegen Bouncy HSM 2.x (Vendor-
-    Portabilitäts-Beleg),
-  - `HSMDOC_HEADER_HMAC_PROFILE=A` gegen Bouncy HSM 2.x (Profil-A-
-    Adapter-Smoke + Spike-Anbindung).
+  `HSM-FA-HSM-001`-Akzeptanz mit Slice 002b ist **nicht erfüllt**
+  ([ADR 0010 §2.3](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)
+  verbindliche Sprachregelung). Lastenheft verlangt Service-Start
+  gegen SoftHSM v2 **und** ein zweites herstellerfremdes Modul
+  ohne Codeänderung; Bouncy HSM allein trägt nur den Anteil
+  „zweites herstellerfremdes Modul" und ersetzt den SoftHSM-
+  Anteil nicht. Akzeptanz ist offen bis **entweder** der
+  Profil-B-Spike (Vorbedingung 4) eine spec-konforme Realisation
+  gegen SoftHSM nachweist **oder** eine Lastenheft-Änderung über
+  `HSM-LESE-004` die Akzeptanz umformuliert.
+
+  CI führt im laufenden Slice-002b-Akzeptanzlauf die folgenden
+  Smoke-Pfade ohne Codeänderung
+  ([ADR 0007 §3](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md),
+  geschärft durch
+  [ADR 0009 §2.2](../../adr/0009-profil-b-extract-reimport-helper-und-softhsm-vorbehalt.md)
+  + [ADR 0010 §3](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)):
+  - `HSMDOC_HEADER_HMAC_PROFILE=B` gegen Bouncy HSM 2.x — grüner
+    Release-Block (Pfad H aus ADR 0010 §2.1; `CKM_HKDF_DERIVE`
+    deckt den nativen Derive ab).
+  - `HSMDOC_HEADER_HMAC_PROFILE=A` gegen Bouncy HSM 2.x — Profil-A-
+    Adapter-Smoke + Spike-Anbindung.
+  - `HSMDOC_HEADER_HMAC_PROFILE=B` gegen SoftHSM v2 — **nur dann
+    CI-Smoke, wenn der Profil-B-Spike einen vendor-konformen
+    Pfad K gegen SoftHSM nachweist**. Findet der Spike keinen
+    Pfad, entfällt der SoftHSM-Smoke; `HSM-FA-HSM-001` bleibt
+    offener M1-Akzeptanzpunkt bis zur Folge-ADR (Lastenheft-
+    Change oder Modul-Tausch).
   Profil A gegen SoftHSM ist **absichtlich kein** CI-Pfad —
   Mechanism-Check würde abbrechen und wäre Doppel-Beleg ohne
-  Mehrwert. Alle drei Pfade sind grüner Release-Block; das
-  Umschalten erfolgt über `HSMDOC_PKCS11_MODULE`,
-  `HSMDOC_PKCS11_TOKEN_LABEL` und
-  `HSMDOC_HEADER_HMAC_PROFILE`. Damit ist
-  `HSM-FA-HSM-001`-Akzeptanz mit Slice 002b erfüllt.
-- **Profil-B-PRK-Zeroize-Invariante** ([ADR 0007 §4](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md)):
-  Code-Review-Akzeptanz: das `profile_b.go`-Codepfad enthält genau
-  einen `prk[i] = 0`-Loop unmittelbar nach `C_CreateObject` und
-  **vor** dem nächsten erreichbaren `C_Sign`. Ein dedizierter
-  Adapter-Unit-Test ruft den Extract-Pfad gegen ein Mock-PKCS#11-
-  Modul und prüft, dass das nach `C_CreateObject` zugängliche
-  `prk`-Slice ausschließlich Null-Bytes enthält. Logging über das
-  PRK ist `gosec`/Code-Review-Gate (kein `fmt.Sprintf("%x", prk)`,
-  kein `log.Debug(... prk ...)`).
+  Mehrwert. Das Umschalten erfolgt über `HSMDOC_PKCS11_MODULE`,
+  `HSMDOC_PKCS11_TOKEN_LABEL` und `HSMDOC_HEADER_HMAC_PROFILE`.
+- **Profil-B-Zeroize-Invariante (pfad-spezifisch,
+  [ADR 0010 §2.2](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)):**
+  `profile_b.go` exportiert ausschließlich die kombinierten Helper
+  `ExtractAndReimportPRK` und `ExpandAndReimportHeaderKey`
+  ([ADR 0009 §2.1](../../adr/0009-profil-b-extract-reimport-helper-und-softhsm-vorbehalt.md)
+  Signatur). Die interne Realisation läuft pfadabhängig — die
+  Zeroize-Akzeptanz ist entsprechend gestaffelt:
+  - **Pfad H (Native-Derive):** Helper enthält **keinen**
+    Klartext-Buffer und entsprechend **kein** `defer zeroize` —
+    `C_DeriveKey` liefert das Handle direkt. Code-Review-
+    Akzeptanz: keine `make([]byte, …)` / `C_Sign` /
+    `C_CreateObject(CKA_VALUE=…)`-Sequenz im H-Pfad. Mock-Hook-
+    Adapter-Test prüft, dass im H-Pfad **nur** `C_DeriveKey`
+    aufgerufen wird (keine Klartext-Datenpfade).
+  - **Pfad K (Klartext-Reimport):** Helper enthält genau ein
+    `defer zeroize(buf)` **unmittelbar** nach der Klartext-
+    Erzeugung und **vor** dem internen `C_CreateObject`
+    (defer-Loop läuft nach dem `C_CreateObject` am Stack-Frame-
+    Ende). Separate `Extract` + `ReimportPRK`-Funktionen sind
+    verboten (siehe ADR 0009 §1.1). Mock-Hook-Adapter-Test ruft
+    den Helper gegen ein Mock-PKCS#11-Modul mit Hook zwischen
+    Klartext-Erzeugung und `C_CreateObject`, greift den
+    Klartext-Snapshot ab und prüft, dass das nach Helper-
+    Rückkehr zugängliche `buf`-Slice ausschließlich Null-Bytes
+    enthält.
+
+  Pfad-übergreifend (für beide Pfade): Logging über PRK oder
+  Header-Key ist `gosec`/Code-Review-Gate (kein
+  `fmt.Sprintf("%x", prk)`, kein `log.Debug(... headerKey ...)`).
 - **HKDF-Profil-Mechanismus-Pflicht** ([`HSM-FMT-006`](../../../../spec/spezifikation.md) §1,
-  [ADR 0007 §2.4](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md)):
-  Die Pflicht-Mechanismen werden je aktivem Profil geprüft —
-  Profil B: `CKM_AES_GCM` + `CKM_SHA256_HMAC`; Profil A:
-  zusätzlich `CKM_HKDF_DERIVE`. Fehlt ein Pflicht-Mechanismus,
-  bricht der Server mit `STARTUP_HSM_MECHANISM_MISSING` ab; die
-  Log-Zeile nennt fehlenden Mechanismus + aktives Profil. Metrik
-  `hsmdoc_header_hmac_profile{profile="A"|"B"}` ist im Start
-  gesetzt; Roundtrip-Test (Encrypt-Container → Header-HMAC neu
-  berechnen aus identischen Inputs → byteweiser Vergleich) ist
-  grün auf beiden Profilen. **Die im Spike validierte Pure-Go-
-  Referenz ([`spike/verify.go`](002b-spike-hkdf/spike/verify.go))
-  liefert nur den Spike-Vergleichswert; produktiver Adapter-Code
-  unter `internal/adapter/driven/pkcs11/` kennt das IKM nie**
+  [ADR 0007 §2.4](../../adr/0007-profil-b-als-m1-default-und-konfigurierbare-profilwahl.md)
+  + [ADR 0010 §2.1](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)):
+  Pflicht-Mechanismen werden je aktivem Profil **und** für
+  Profil B zusätzlich **pfad-spezifisch** geprüft (Pfad H = native
+  HKDF-Derive, Pfad K = modul-registrierter vendor-konformer
+  Pfad). Detail-Liste:
+  - **Profil A:** `CKM_AES_GCM` + `CKM_HKDF_DERIVE` + `CKM_SHA256_HMAC`.
+  - **Profil B Pfad H:** `CKM_AES_GCM` + `CKM_HKDF_DERIVE` +
+    `CKM_SHA256_HMAC`.
+  - **Profil B Pfad K:** `CKM_AES_GCM` + modul-registrierter
+    Pfad-K-Mechanismus + `CKM_SHA256_HMAC`.
+  Fehlt ein Pflicht-Mechanismus, bricht der Server mit
+  `STARTUP_HSM_MECHANISM_MISSING` ab; die Log-Zeile nennt
+  fehlenden Mechanismus, aktives Profil und Pfad. Metrik
+  `hsmdoc_header_hmac_profile{profile="A"|"B",path="H"|"K"}` ist
+  im Start gesetzt; Roundtrip-Test (Encrypt-Container → Header-
+  HMAC neu berechnen aus identischen Inputs → byteweiser
+  Vergleich) ist grün für alle aktivierbaren Profil-/Pfad-
+  Kombinationen. **Die im Spike validierte Pure-Go-Referenz
+  ([`spike/verify.go`](002b-spike-hkdf/spike/verify.go)) liefert
+  nur den Spike-Vergleichswert; produktiver Adapter-Code unter
+  `internal/adapter/driven/pkcs11/` kennt das IKM nie**
   ([ADR 0006 §4](../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md)).
 - **`CK_HKDF_PARAMS`-Shim verifiziert** (Spike-Output, siehe
   §Vorbedingungen „Status nach Spike + ADR 0006"): Der gewählte
@@ -1628,10 +1789,18 @@ wird **nicht** ohne Profil-B-Spike-Output aktiviert.
   (siehe „HSM-FA-HSM-001 Vendor-Smoke" oben), ohne Codeänderung
   zwischen den Läufen. Ein zweites SoftHSM-Image mit divergenter
   Token-Konfiguration ist **kein** Ersatz-Nachweis und zählt
-  höchstens als zusätzlicher Smoke. `HSM-FA-HSM-001`-Akzeptanz mit
-  Slice 002b: **erfüllt**, sobald Profil-B-Spike (Vorbedingung 4)
-  grün ist und der Profil-B-Adapter-Code aus dem Spike-Output
-  übernommen ist.
+  höchstens als zusätzlicher Smoke. `HSM-FA-HSM-001`-Akzeptanz
+  mit Slice 002b: **erfüllt nur dann**, wenn der Profil-B-Spike
+  (Vorbedingung 4) **sowohl SoftHSM als auch Bouncy HSM** für
+  Profil B freigegeben hat (entweder Pfad H oder ein vendor-
+  konformer Pfad K gemäß
+  [ADR 0010 §2.1](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md))
+  und der entsprechende Adapter-Code übernommen ist. Findet der
+  Spike für SoftHSM keinen freigegebenen Pfad → `HSM-FA-HSM-001`
+  bleibt **offen**, Slice 002b kann zwar nach `in-progress/`
+  migrieren, aber **M1-Closure ist blockiert** bis Lastenheft-
+  Change oder Modul-Tausch
+  ([ADR 0010 §2.3](../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)).
 - **CGO/Pure-Go-Gates:** `make test` läuft mit `CGO_ENABLED=0`
   erfolgreich und kompiliert das PKCS#11-Paket nur über den `!cgo`-
   Stub; ein Test belegt, dass der Stub bei Initialisierung

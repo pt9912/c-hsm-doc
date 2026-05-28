@@ -38,37 +38,70 @@ Reihenfolge:
 3. `C_Login`
 4. `C_FindObjectsInit` + `C_FindObjects` + `C_FindObjectsFinal`
    (Master-HMAC-Lookup) — identisch zu Profil-A-Spike Schritt 4.
-5. `C_SignInit` mit `CKM_SHA256_HMAC` + `masterKey`. **HKDF-Extract,
-   Phase 1.**
-6. `C_Sign` mit `salt` als Daten → liefert 32-Byte-`PRK` als
-   Klartext im Server-RAM. **1 oder 2 Aufrufe** zulässig
-   (miekg-Two-Call-Wrapper).
-7. `C_CreateObject` mit Template `(CKA_CLASS=CKO_SECRET_KEY,
-   CKA_KEY_TYPE=CKK_GENERIC_SECRET, CKA_VALUE=PRK, CKA_SIGN=true,
-   CKA_TOKEN=false, CKA_EXTRACTABLE=false, CKA_SENSITIVE=true,
-   CKA_MODIFIABLE=false)` → `prkHandle`. **PRK-Re-Import.**
-8. **(Adapter-internal, kein PKCS#11-Call):** Der `Extract`-Helper
-   gibt zurück, und sein `defer zeroize(prkBuf)` löscht den PRK-
-   Buffer aus dem Go-Heap. Der Trace zeigt dafür nichts — Invariante
-   wird im Adapter-Unit-Test mit Mock-Hook geprüft (siehe
-   [Spike-README §3 Punkt 3](../README.md)).
+5. **`ExtractAndReimportPRK`-Aufrufgruppe (modulabhängig,
+   [ADR 0010 §2.1](../../../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)).**
+   - **Pfad H (Bouncy HSM):** **genau ein** PKCS#11-Call:
+     `C_DeriveKey(CKM_HKDF_DERIVE, extractParams, masterKey,
+     prkTemplate)` → `prkHandle` direkt. Kein Klartext-PRK im
+     Server-RAM. **Schritte 6 + 7 entfallen** (kein
+     `C_CreateObject`, kein Zeroize).
+   - **Pfad K (Spike-Erkundung pro Modul):** mindestens ein
+     HSM-Aufruf, der `HMAC(salt, IKM)` realisiert, ohne das
+     nicht-extrahierbare Master-Material zu exportieren —
+     konkrete Aufruffolge ist Spike-Erkundungs-Material und
+     wird im §6 Ergebnis pro Modul protokolliert. Output:
+     32-Byte-PRK als Klartext **innerhalb** des
+     `ExtractAndReimportPRK`-Helpers. Schritte 6 + 7 folgen.
+   Findet der Spike für ein Modul keinen Pfad H und keinen
+   vendor-konformen Pfad K → Modul ist für Profil B **nicht
+   freigegeben**.
+6. **(Nur Pfad K)** `C_CreateObject` mit Template
+   `(CKA_CLASS=CKO_SECRET_KEY, CKA_KEY_TYPE=CKK_GENERIC_SECRET,
+   CKA_VALUE=PRK, CKA_SIGN=true, CKA_TOKEN=false,
+   CKA_EXTRACTABLE=false, CKA_SENSITIVE=true,
+   CKA_MODIFIABLE=false)` → `prkHandle`. **PRK-Re-Import,
+   weiterhin innerhalb des `ExtractAndReimportPRK`-Helpers.**
+7. **(Nur Pfad K, Adapter-internal, kein PKCS#11-Call):** Der
+   `defer zeroize(prkBuf)` läuft am Stack-Frame-Ende **nach**
+   Schritt 6 und löscht den lokalen PRK-Buffer aus dem Go-Heap,
+   **bevor** der Aufrufer das `prkHandle` zurückbekommt. Der
+   Trace zeigt dafür nichts — Invariante wird im Adapter-
+   Unit-Test mit Mock-Hook geprüft (siehe
+   [Spike-README §3 Punkt 3](../README.md) +
+   [ADR 0010 §2.2](../../../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)).
 9. `C_GetAttributeValue` auf `prkHandle` (Verifikation
    `CKA_EXTRACTABLE=false`, `CKA_SIGN=true`, `CKA_SENSITIVE=true`).
    **1 oder 2 Aufrufe** zulässig.
 10. `C_GetAttributeValue` mit `CKA_VALUE` auf `prkHandle` →
     erwartete Antwort `CKR_ATTRIBUTE_SENSITIVE` (Spike-Erfolgs-
     Kriterium §3 Punkt 6, erste Hälfte).
-11. `C_SignInit` mit `CKM_SHA256_HMAC` + `prkHandle`. **HKDF-Expand,
-    Phase 1.**
-12. `C_Sign` mit `info || 0x01` als Daten → liefert 32-Byte-
-    `headerKey` als Klartext im Server-RAM. **1 oder 2 Aufrufe**.
-13. `C_CreateObject` mit demselben Template wie Schritt 7, aber
-    `CKA_VALUE=headerKey` → `headerKeyHandle`. **Header-Key-Re-Import.**
-14. **(Adapter-internal):** `defer zeroize(headerKeyBuf)` löscht
-    den Header-Key-Buffer aus dem Go-Heap (zweite Hälfte der
-    Zeroize-Pflicht-Invariante).
+11. **`ExpandAndReimportHeaderKey`-Aufrufgruppe (modulabhängig,
+    [ADR 0010 §2.1](../../../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)).**
+    - **Pfad H (Bouncy HSM):** **genau ein** PKCS#11-Call:
+      `C_DeriveKey(CKM_HKDF_DERIVE, expandParams, prkHandle,
+      headerKeyTemplate)` mit `bExtract=false, bExpand=true`,
+      `prkHandle` als Base-Key → `headerKeyHandle` direkt. Kein
+      Klartext-Header-Key im Server-RAM. **Schritte 12 + 13 + 14
+      entfallen** (kein `C_Sign`, kein `C_CreateObject`, kein
+      Zeroize).
+    - **Pfad K (Spike-Erkundung pro Modul):**
+      `C_SignInit(CKM_SHA256_HMAC, prkHandle)` + `C_Sign(info || 0x01)`
+      + internes `C_CreateObject` — die volle Klartext-Reimport-
+      Sequenz (Schritte 12 + 13 + 14).
+12. **(Nur Pfad K)** `C_Sign` mit `info || 0x01` als Daten →
+    liefert 32-Byte-`headerKey` als Klartext im Server-RAM.
+    **1 oder 2 Aufrufe**.
+13. **(Nur Pfad K)** `C_CreateObject` mit demselben Template wie
+    Schritt 6, aber `CKA_VALUE=headerKey` → `headerKeyHandle`.
+    **Header-Key-Re-Import, weiterhin innerhalb des
+    `ExpandAndReimportHeaderKey`-Helpers.**
+14. **(Nur Pfad K, Adapter-internal):** `defer zeroize(headerKeyBuf)`
+    aus dem Helper läuft am Stack-Frame-Ende nach Schritt 13 und
+    löscht den Header-Key-Buffer aus dem Go-Heap, bevor der
+    Aufrufer das `headerKeyHandle` zurückbekommt.
 15. `C_DestroyObject(prkHandle)` — PRK-Handle wird nicht mehr
-    gebraucht. **Exakt 1 Aufruf.**
+    gebraucht. **Exakt 1 Aufruf** (vom Aufrufer der Helper-
+    Funktionen ausgelöst).
 16. `C_GetAttributeValue` mit `CKA_VALUE` auf `headerKeyHandle` →
     erwartete Antwort `CKR_ATTRIBUTE_SENSITIVE` (zweite Hälfte
     Spike-Erfolgs-Kriterium §3 Punkt 6).
@@ -89,29 +122,58 @@ Reihenfolge:
     Schritt 11).
 21. `C_Logout` + `C_CloseSession` + `C_Finalize`.
 
-Abweichungen (z. B. fehlendes Zeroize zwischen Schritt 7 und 9,
-fehlendes Zweit-Zeroize zwischen Schritt 13 und 16, ein
-`C_GetAttributeValue(CKA_VALUE)`-Erfolg statt
-`CKR_ATTRIBUTE_SENSITIVE`, oder eine `C_CreateObject`-Wiederholung
-nach `CKR_TEMPLATE_INCONSISTENT`) sind Spike-Befunde und gehören
-in §6 „Ergebnis" der Spike-README — Pfad (b) Vendor-Variante wird
-genau dort dokumentiert.
+Abweichungen sind pfad-spezifisch zu lesen:
+
+- **Auf Pfad H** sind Schritte 6–7 (PRK-Re-Import + Zeroize) und
+  12–14 (Header-Key-Re-Import + Zeroize) **nicht zu erwarten** —
+  ihr Auftauchen wäre Befund, dass der Helper fälschlich Pfad K
+  fährt (Adapter-Bug, Code-Review-Akzeptanzverletzung). Erwartet
+  wird stattdessen genau ein `C_DeriveKey` pro Stufe (Extract,
+  Expand) ohne dazwischenliegendes `C_CreateObject`.
+- **Auf Pfad K** ist fehlendes Zeroize zwischen Schritt 7 und 9
+  bzw. zwischen 13 und 16 ein Bug (Zeroize-Owner-Vertrag aus
+  [ADR 0010 §2.2](../../../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)
+  verletzt); ein `C_GetAttributeValue(CKA_VALUE)`-Erfolg statt
+  `CKR_ATTRIBUTE_SENSITIVE` ist Spec-Verletzung; eine
+  `C_CreateObject`-Wiederholung nach `CKR_TEMPLATE_INCONSISTENT`
+  ist erwartete Pfad-K-Quirk-Erkundung.
+
+Alle pfad-spezifischen Befunde gehören in §6 „Ergebnis" der
+Spike-README; die pro Modul gewählte Variante (Pfad H, Pfad K
+mit konkretem Vendor-Mechanismus, oder „nicht freigegeben")
+wird genau dort dokumentiert.
 
 ## Profil-A-vs-Profil-B-Diff (Trace-Ebene)
 
-Zwischen Profil-A-Spike und Profil-B-Spike unterscheiden sich:
+Zwischen Profil-A-Spike und Profil-B-Spike unterscheiden sich
+die Aufruffolgen pfad-spezifisch
+([ADR 0010 §2.1](../../../../adr/0010-profil-b-helper-zwei-pfade-und-fa-hsm-001-status.md)):
 
-- **Schritte 5–14 (Profil B) ↔ Schritt 5 (Profil A):**
-  Ein `C_DeriveKey(CKM_HKDF_DERIVE, …)`-Aufruf in Profil A wird in
-  Profil B durch zwei `C_Sign`-Aufrufe (Extract, Expand) plus zwei
-  `C_CreateObject`-Aufrufe (PRK-Re-Import, Header-Key-Re-Import)
-  ersetzt — sechs PKCS#11-Calls statt einem. Zwei Klartext-Buffer
-  (`PRK`, `headerKey`) leben mikrosekunden im Server-Heap.
+- **Profil A (Pfad-a-Shim aus ADR 0006):**
+  ein `C_DeriveKey(CKM_HKDF_DERIVE, params={bExtract=true,
+  bExpand=true}, masterKey, headerKeyTemplate)` → finaler
+  `headerKeyHandle` in einem Schritt. Kein Klartext im
+  Server-RAM.
+- **Profil B Pfad H (Bouncy HSM):** zwei `C_DeriveKey`-Aufrufe —
+  `bExtract=true, bExpand=false, masterKey` → `prkHandle`, dann
+  `bExtract=false, bExpand=true, prkHandle` → `headerKeyHandle`.
+  Output ist identisch zu Profil A (RFC-5869-HKDF mit L=32),
+  PKCS#11-Aufrufe sind zwei statt eins. Kein Klartext im
+  Server-RAM. Templates wie in ADR 0010 §2.1 spezifiziert
+  (PRK: `CKA_DERIVE=true`/`CKA_SIGN=false`; Header-Key:
+  `CKA_DERIVE=false`/`CKA_SIGN=true`).
+- **Profil B Pfad K (vendor-konformer Klartext-Reimport):**
+  vendor-konformer PKCS#11-Pfad für Extract liefert
+  Klartext-PRK → `C_CreateObject(CKA_VALUE=PRK)` →
+  `C_SignInit/C_Sign` für Expand → `C_CreateObject(CKA_VALUE=
+  headerKey)`. Vier PKCS#11-Calls plus zwei Klartext-Buffer
+  (PRK, header_key), die durch `defer zeroize` in den Helpern
+  geschützt werden.
 - **Cross-Profil-Identität bleibt erhalten.** Spec-konforme
-  Profil-B-Konstruktion (`HMAC(salt, IKM)` für Extract, RFC-5869-
-  HKDF mit L=32 ein Expand-Block) liefert denselben Header-Key
-  wie Profil A. Container sind cross-profil-verifizierbar — ein
-  Profil-A-Container kann mit Profil B gelesen werden und
-  umgekehrt ([ADR 0008 §2.1](../../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)).
+  Profil-B-Konstruktion (Extract = `HMAC(salt, IKM)`, Expand =
+  `HMAC(PRK, info||0x01)`, L=32) liefert denselben Header-Key
+  wie Profil A — über Pfad H und Pfad K gleichermaßen
+  ([ADR 0008 §2.1](../../../../adr/0008-profil-b-spec-konstruktion-zeroize-owner.md)).
+  Container sind cross-profil-verifizierbar.
 - **Sonst identisch:** Find/Login/Logout/Init/Finalize sind
   spiegelbar.
