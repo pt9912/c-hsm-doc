@@ -9,7 +9,7 @@
 [ADR 0001](0001-documentation-and-planning-structure.md),
 [ADR 0002](0002-docker-only-build-pipeline.md)
 (geschärft durch diese ADR — §2.7),
-[Slice 002a](../planning/in-progress/002a-cgo-build-pipeline.md)
+[Slice 002a](../planning/done/002a-cgo-build-pipeline.md)
 
 ---
 

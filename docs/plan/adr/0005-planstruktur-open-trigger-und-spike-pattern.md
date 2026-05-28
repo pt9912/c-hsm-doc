@@ -5,7 +5,7 @@
 **Bezug:** [ADR 0001](0001-documentation-and-planning-structure.md)
 (geschärft durch diese ADR — §2.4),
 [Slice 001](../planning/done/001-grpc-skeleton.md),
-[Slice 002a](../planning/in-progress/002a-cgo-build-pipeline.md),
+[Slice 002a](../planning/done/002a-cgo-build-pipeline.md),
 [Slice 002b](../planning/next/002b-pkcs11-encrypt-hexagon.md)
 
 ---

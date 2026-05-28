@@ -93,7 +93,7 @@ Dieser Slice ist der erste echte M1-Schritt nach dem Bootstrap-Stand.
 - [Spezifikation `HSM-API-GRPC-004..005`, `HSM-API-CFG-001..002`](../../../../spec/spezifikation.md)
 - [Architektur Kapitel 2 (Komponenten), 5.1 (Encrypt-Stream-Sequenz)](../../../../spec/architecture.md)
 - [Open-Trigger 001 — `go.sum` Strict-Mode (done)](001-gosum-strict-mode.md)
-- [Open-Trigger 002 — CGO-Base-Switch](../open/002-distroless-base-fuer-cgo.md)
+- [Open-Trigger 002 — CGO-Base-Switch (done)](002-distroless-base-fuer-cgo.md)
 - [Roadmap M1](../in-progress/roadmap.md)
 
 ## Closure

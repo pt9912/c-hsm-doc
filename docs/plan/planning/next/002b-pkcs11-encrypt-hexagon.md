@@ -1580,7 +1580,7 @@ darf erst danach starten.
   `HSM-FA-AUDIT-006..008`, `HSM-FA-KEY-006`,
   `HSM-API-GRPC-006..007`](../../../../spec/spezifikation.md)
 - [Architektur Kapitel 2 (Komponenten), 3 (Hexagonale Schichtung), 5.1 (Encrypt-Stream-Sequenz)](../../../../spec/architecture.md)
-- [Vorgänger-Slice 002a — CGO-Build-Pipeline](../in-progress/002a-cgo-build-pipeline.md)
+- [Vorgänger-Slice 002a — CGO-Build-Pipeline (done)](../done/002a-cgo-build-pipeline.md)
 - [ADR 0001 §2.3 — Accepted-ADRs sind immutable](../../adr/0001-documentation-and-planning-structure.md)
 - [ADR 0002 — Docker-only Build-Pipeline](../../adr/0002-docker-only-build-pipeline.md)
 - [`internal/README.md` — Hexagon-Ziel-Layout](../../../../internal/README.md)

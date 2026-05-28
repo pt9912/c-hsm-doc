@@ -71,7 +71,7 @@ der den DoD-Punkt erfüllt.
 | `[ ]` | `M1-DoD-04` | Java-Beispielprogramm läuft gegen Demo-Service               | `examples/`-Modul + Live-Lauf     | `HSM-MVP-006`, `HSM-API-JAVA-001`                  |
 | `[x]` | `M1-DoD-05` | `make ci` grün mit `internal/`-Coverage ≥ 80 % (kein Bootstrap) | CI-Job-Status                     | ADR 0002 §2.5                                      |
 | `[x]` | `M1-DoD-06` | Open-Trigger 001 (`go.sum` Strict-Mode) nach `done/` migriert | Repo-State                        | [`done/001`](../done/001-gosum-strict-mode.md)     |
-| `[ ]` | `M1-DoD-07` | Open-Trigger 002 (CGO-Base-Switch) nach `done/` migriert      | Repo-State                        | [`open/002`](../open/002-distroless-base-fuer-cgo.md), eingelöst durch [Slice 002a](002a-cgo-build-pipeline.md) |
+| `[x]` | `M1-DoD-07` | Open-Trigger 002 (CGO-Base-Switch) nach `done/` migriert      | Repo-State                        | [`done/002`](../done/002-distroless-base-fuer-cgo.md), eingelöst durch [Slice 002a](../done/002a-cgo-build-pipeline.md) |
 
 **Verifikationspfad:** Integrationstests in CI gegen SoftHSM, Helm-
 Smoke-Test gegen Kind, Maven-Build-Analyse für Java-Client.
@@ -88,10 +88,12 @@ TLS 1.3, Health-/Ready-Endpoints, 12-Factor-Konfiguration; geliefert
 am 2026-05-27). Open-Trigger 001 (`go.sum` Strict-Mode) ist mit
 diesem Slice eingelöst und nach
 [`done/001-gosum-strict-mode.md`](../done/001-gosum-strict-mode.md)
-migriert. Aktiv läuft jetzt Slice 002a
-([`in-progress/002a-cgo-build-pipeline.md`](002a-cgo-build-pipeline.md);
-aktiv ab 2026-05-27); geplante Folge-Slices stehen in der
-Slice-Tabelle unten.
+migriert. Slice 002a (CGO-Build-Pipeline) ist mit Closure-PR vom
+2026-05-28 nach [`done/002a-cgo-build-pipeline.md`](../done/002a-cgo-build-pipeline.md)
+migriert; M1-DoD-07 ist damit abgehakt. Aktiv-Schlitz ist offen
+für Slice 002b (PKCS#11-Adapter + Encrypt-Hexagon,
+[`next/002b-pkcs11-encrypt-hexagon.md`](../next/002b-pkcs11-encrypt-hexagon.md));
+geplante Folge-Slices stehen in der Slice-Tabelle unten.
 
 ---
 
@@ -206,17 +208,20 @@ Service nicht für andere blockieren.
 
 Liste lebt in [`docs/plan/planning/open/`](../open/). Aktueller Bestand:
 
-- _(keiner — der einzige bisher offene Trigger
-  [`002-distroless-base-fuer-cgo`](../open/002-distroless-base-fuer-cgo.md)
-  wird gerade durch [Slice 002a](002a-cgo-build-pipeline.md)
-  eingelöst; die Trigger-Datei wandert mit dem Slice-002a-Closure-PR
-  nach `done/`.)_
+- _(keiner — alle bisher offenen Trigger sind eingelöst und nach
+  `done/` migriert.)_
 
 Erledigte Trigger:
 
 - [`001-gosum-strict-mode`](../done/001-gosum-strict-mode.md) —
   eingelöst durch Slice 001 am 2026-05-27 (Dockerfile-Strict-Copy +
   `go mod verify`).
+- [`002-distroless-base-fuer-cgo`](../done/002-distroless-base-fuer-cgo.md)
+  — eingelöst durch [Slice 002a](../done/002a-cgo-build-pipeline.md)
+  am 2026-05-27 (Runtime-Base auf `distroless/base-debian12:nonroot`,
+  CGO-Pipeline mit `lddtree`-basierter Library-Closure und
+  `pkcs11-dlopen-smoke`-Verifikation); Closure-Migration nach `done/`
+  am 2026-05-28.
 
 Beispiele für künftige Trigger, die noch keinen Eintrag haben:
 
@@ -246,7 +251,7 @@ wird er aus der Liste gestrichen.
 
 | Meilenstein | Status                                                                          |
 | ----------- | ------------------------------------------------------------------------------- |
-| M1          | Slice 001 in `done/`; Slice 002a in `in-progress/` (Build-Pipeline implementiert, `make ci` grün, vor Slice-Closure); Slice 002b in `next/`. |
+| M1          | Slices 001 + 002a in `done/`; Slice 002b in `next/` (Aktiv-Schlitz offen); M1-DoD-05/06/07 abgehakt. |
 | M2          | wartet auf M1-Closure; Slice 006 (Identity-Source) in `next/` vorbereitet.       |
 | M3          | wartet auf M2-Closure und Verfügbarkeit Produktions-HSM.                        |
 | M4          | wartet auf M3-Closure.                                                          |
@@ -261,7 +266,7 @@ parallel arbeiten.
 | Slice | Titel                                              | Ort           | Status             | Letzter Touchpoint           |
 | ----- | -------------------------------------------------- | ------------- | ------------------ | ---------------------------- |
 | 001   | [gRPC-Skeleton](../done/001-grpc-skeleton.md)      | `done`        | Akzeptanzkriterien erfüllt, Closure-Notiz im Slice-Dokument; M1-DoD-05/06 abgehakt | Closure-Commit (2026-05-27)  |
-| 002a  | [CGO-Build-Pipeline](002a-cgo-build-pipeline.md) | `in-progress` | Aktiv ab 2026-05-27; ADR 0004 + 0005 angelegt, Dockerfile/Makefile/Smoke-Binary committed, `make ci` grün (Coverage 91.8 %, 0 Trivy HIGH/CRITICAL, Runtime-Image 43,9 MiB); offen: Open-Trigger 002 nach `done/` migrieren und Slice-Closure | Commit `ec77196` (2026-05-27) |
+| 002a  | [CGO-Build-Pipeline](../done/002a-cgo-build-pipeline.md) | `done`        | Akzeptanzkriterien erfüllt, Closure-Notiz im Slice-Dokument; ADR 0004 + 0005 `Accepted`; Open-Trigger 002 nach `done/` migriert; M1-DoD-07 abgehakt | Closure-Commit (2026-05-28) |
 | 002b  | [PKCS#11-Adapter + Encrypt-Hexagon](../next/002b-pkcs11-encrypt-hexagon.md) | `next`        | Encrypt-Slice (Hexagon-Schicht, PKCS#11-Adapter, Audit-Sink, Key-Registry); wartet auf Slice-002a-Closure und HKDF-Spike; trägt den fachlichen M1-Encrypt-Pfad | Plan-Commit (2026-05-27)     |
 | 003   | Container-Codec + Decrypt                          | _ungeschnitten_ | geplant; hängt an 002b (Container-Encoder + Pro-Chunk-AAD)         | —                            |
 | 004   | Basis-Audit-Log mit Hash-Chain                     | _ungeschnitten_ | geplant                                          | —                            |

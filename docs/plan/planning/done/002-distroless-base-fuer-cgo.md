@@ -1,7 +1,18 @@
 # 002 — Runtime-Base auf `distroless/base` umstellen, sobald CGO/PKCS#11 dazukommt
 
+**Status:** `done` (eingelöst durch [Slice 002a](002a-cgo-build-pipeline.md)
+am 2026-05-28).
 **Trigger:** Befund L1 aus dem Build-Pipeline-Security-Review
 (2026-05-26).
+**Umsetzung:** Dockerfile-Runtime-Base wechselt auf
+`gcr.io/distroless/base-debian12:nonroot`; `build`-Stage schaltet
+`CGO_ENABLED=1`; neue `deps-closure`-Stage ermittelt die transitive
+Shared-Library-Closure deterministisch über `lddtree` aus `pax-utils`
+und stagt sie in das Runtime-Image; `closure-check`-Stage verifiziert
+Build-Time, `pkcs11-dlopen-smoke`-Binary verifiziert Runtime. ADR 0004
+(Runtime-Base CGO/PKCS#11) trägt die Begründung und Messwerte
+(Runtime-Image 43,9 MiB, Trivy 0 HIGH/CRITICAL). Lieferung im
+Slice-002a-Implementations-Commit `ec77196` (2026-05-27).
 
 ## Beobachtung
 

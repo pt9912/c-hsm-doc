@@ -1,7 +1,7 @@
 # 002a — CGO-Build-Pipeline für PKCS#11
 
-**Meilenstein:** M1 (siehe [`roadmap.md`](roadmap.md))
-**Status:** `in-progress` (aktiv ab 2026-05-27)
+**Meilenstein:** M1 (siehe [`roadmap.md`](../in-progress/roadmap.md))
+**Status:** `done` (geliefert am 2026-05-27, geschlossen am 2026-05-28)
 **Datum:** 2026-05-27
 
 ## Ziel
@@ -11,7 +11,7 @@ wird die CGO-fähige Pipeline, die der nachfolgende Slice 002b für den
 PKCS#11-Adapter braucht. Slice 002a löst **ausschließlich** den
 Build-Pfad ein — kein Adapter-Code, keine Hexagon-Schicht, kein
 Encrypt-Stream. Damit wird Open-Trigger 002
-([`002-distroless-base-fuer-cgo.md`](../open/002-distroless-base-fuer-cgo.md))
+([`002-distroless-base-fuer-cgo.md`](002-distroless-base-fuer-cgo.md))
 abgeschlossen und ADR 0004 als Schärfung von ADR 0002 angelegt
 ([ADR 0001 §2.3](../../adr/0001-documentation-and-planning-structure.md)).
 
@@ -175,10 +175,10 @@ hängen an 002b, nicht an 002a.
 ## Vorbedingungen für die Aktivierung
 
 1. **Slice 001** ist nach `done/` migriert (Akzeptanzkriterien laut
-   [`001-grpc-skeleton.md`](../done/001-grpc-skeleton.md) §
+   [`001-grpc-skeleton.md`](001-grpc-skeleton.md) §
    „Akzeptanzkriterien" erfüllt). Ohne Skeleton kein Anschluss-Point.
 2. **Open-Trigger 002** ist noch in `open/` (gegeben — siehe
-   [`002-distroless-base-fuer-cgo.md`](../open/002-distroless-base-fuer-cgo.md)).
+   [`002-distroless-base-fuer-cgo.md`](002-distroless-base-fuer-cgo.md)).
    Dieser Slice löst ihn ein.
 3. **Coverage-Schwellwert ≥ 80 %** bleibt erhalten — der CGO-Switch
    darf keinen Coverage-Regress erzeugen. In 002a fällt noch kein
@@ -275,7 +275,7 @@ hängen an 002b, nicht an 002a.
   re-bewertet, falls Scope sich geändert hat).
 - **Roadmap-Lifecycle** wird in zwei Schritten aktualisiert:
   - **Bei Slice-Aktivierung** (Migration `next/` → `in-progress/`):
-    Slice-Tabelle in [`roadmap.md`](roadmap.md)
+    Slice-Tabelle in [`roadmap.md`](../in-progress/roadmap.md)
     führt 002a als `in-progress`; Open-Trigger-Block streicht 002
     (gleicher Lifecycle wie 001 beim Aktivieren).
   - **Bei Slice-Abschluss** (Merge des Schluss-PR, alle Akzeptanz-
@@ -306,7 +306,7 @@ hängen an 002b, nicht an 002a.
   kommen mit 002b.
 - **Kein Setzen von `MaxRecvMsgSize`** in `cmd/hsmdoc/main.go`.
   Der `TODO(slice-002)`-Marker bleibt unangetastet; Item §2.1 aus
-  [`offene-arbeitsfaeden.md`](offene-arbeitsfaeden.md)
+  [`offene-arbeitsfaeden.md`](../in-progress/offene-arbeitsfaeden.md)
   bleibt offen bis 002b (Encrypt-Stream landet erst dort).
 - **Kein Umbau der Coverage-Mechanik.** `gocovmerge`, Build-Tag-
   Trennung Unit/Integration und CGO-pflichtige Coverage-Pfade
@@ -347,8 +347,68 @@ gelistet.
   002a deckt nur den `dlopen`-Aspekt (Closure-Smoke, Existenz +
   RTLD-Auflösung) ab; den vollen Existenz/ELF-Header/`C_GetInfo`-
   Check liefert 002b im PKCS#11-Adapter (§Modul-Validierung).
-- [Open-Trigger 002 — CGO-Base-Switch](../open/002-distroless-base-fuer-cgo.md)
+- [Open-Trigger 002 — CGO-Base-Switch (done)](002-distroless-base-fuer-cgo.md)
 - [ADR 0001 §2.3 — Accepted-ADRs sind immutable, Schärfung über neuen ADR](../../adr/0001-documentation-and-planning-structure.md)
 - [ADR 0002 — Docker-only Build-Pipeline](../../adr/0002-docker-only-build-pipeline.md)
 - [Folge-Slice 002b — PKCS#11-Adapter + Encrypt-Hexagon](../next/002b-pkcs11-encrypt-hexagon.md)
-- [Roadmap M1](roadmap.md)
+- [Roadmap M1](../in-progress/roadmap.md)
+
+## Closure
+
+Geliefert am 2026-05-27 mit Commit `ec77196` (CGO-Build-Pipeline:
+Dockerfile auf `distroless/base-debian12:nonroot`, `build`-Stage auf
+`CGO_ENABLED=1`, neue `deps-closure`-Stage mit `lddtree`-basierter
+Stückliste in `/etc/hsmdoc/pkcs11-libs.txt` und Staging-Rootfs,
+neue `closure-check`-Stage als Sentinel-Voraussetzung des
+Runtime-Images, `cmd/pkcs11-dlopen-smoke/` als Cgo-Helper plus
+Pure-Go-Stub für den `CGO_ENABLED=0`-Coverage-Pfad,
+Makefile-Targets `closure-check`/`smoke-dlopen`/`image-scan`/
+`image-size` und `make ci`-Aggregation) und Commit `49ca243`
+(Tagesabschluss: README, `README.de.md`, `internal/README.md` und
+`roadmap.md`-Touchpoint nachgezogen). Geschlossen am 2026-05-28
+durch diesen Closure-PR (`open/ → done/`-Migration für Slice 002a
+und Open-Trigger 002).
+
+Akzeptanzkriterien erfüllt:
+
+- `make ci` grün gegen den Slice-002a-Code (Lint, Unit-Tests,
+  Coverage 91,8 % auf `./internal/...`, `docs-check`,
+  `govulncheck`); `make ci` aggregiert zusätzlich die neuen
+  Image-Gates `closure-check`, `smoke-dlopen`, `image-scan` und
+  `image-size`. `make fullbuild` grün mit CGO-Build, Distroless-
+  base-Runtime, Closure-Copy und Sentinel-Voraussetzung
+  (`closure-check.ok`).
+- Shared-Library-Closure zweistufig grün: `lddtree --root
+  $RUNTIME_FS` aus der `closure-check`-Stage meldet keine
+  „not found"-Einträge; `pkcs11-dlopen-smoke` öffnet
+  `$HSMDOC_PKCS11_MODULE` mit Exit 0. Stückliste
+  `/etc/hsmdoc/pkcs11-libs.txt` liegt im Runtime-Image und ist
+  identisch zur `closure-check`-Stage-Ausgabe.
+- Image-Größe + Trivy-Scan reproduzierbar gemessen:
+  Runtime-Image 43,9 MiB (46 001 254 Byte), Trivy 0 HIGH/CRITICAL
+  über Debian-Packages, Server- und Smoke-Binary; Artefakte
+  unter `out/security/trivy-runtime.json` und
+  `out/security/image-size.txt`. Messwerte sind in ADR 0004 §2.7
+  übernommen.
+- `make smoke-dlopen` verfügbar und grün gegen das CI-SoftHSM-
+  Modul; `cmd/pkcs11-dlopen-smoke/` im Runtime-Image unter
+  `/usr/local/bin/pkcs11-dlopen-smoke`.
+- CI-Bild kann SoftHSM v2 ausführen (`softhsm2-util --version`
+  läuft); OpenCryptoki als zweites OSS-Modul ist im
+  CI-Build-Image installiert; Build-/Closure-Stages auf
+  Debian 12/Bookworm gepinnt.
+- ADR 0004 (Runtime-Base CGO/PKCS#11) als `Accepted` angelegt
+  inklusive Image-Größe, Trivy-Ergebnis und Wahl des zweiten
+  OSS-Moduls; ADR-Index trägt 0004 als Schärfung von ADR 0002.
+- Folge-ADR zur Planstruktur als ADR 0005 (`Accepted`) angelegt,
+  dokumentiert Open-Trigger-Lifecycle und `next/<slice>/`-Sub-
+  Verzeichnis-Pattern; ADR-Index trägt 0005 als Schärfung von
+  ADR 0001.
+- Open-Trigger 002 ist nach `done/` migriert (M1-DoD-07 `[x]`).
+- Roadmap-Slice-Tabelle führt 002a als `done`.
+
+**Folgeschritt:** Slice 002b (PKCS#11-Adapter + Encrypt-Hexagon)
+ist als nächster M1-Schritt vorgesehen und konsumiert die
+CGO-Pipeline, die Library-Closure-Verifikation, den
+`pkcs11-dlopen-smoke`-Pfad sowie SoftHSM v2 + OpenCryptoki aus
+dem CI-Build-Image.
