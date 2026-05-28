@@ -1,6 +1,9 @@
 # Spike — `CKM_HKDF_DERIVE` auf SoftHSM v2 + OpenCryptoki
 
-**Status:** geplant (Sub-Verzeichnis angelegt, Probe-Code folgt)
+**Status:** in Arbeit — Pfad (a) Shim-Serialisierer + Pure-Go-Unit-Tests
+landed (`make spike-hkdf-test` grün); HSM-Aufrufpfade (`C_DeriveKey`,
+`C_SignInit`, `C_Sign`, `C_DestroyObject`) gegen SoftHSM v2 + OpenCryptoki
+ausstehend.
 **Datum:** 2026-05-28
 **Bezug:**
 [Slice 002b §Vorbedingungen](../002b-pkcs11-encrypt-hexagon.md),
@@ -75,6 +78,10 @@ nachweisbar sind:
    - `CKA_CLASS = CKO_SECRET_KEY`
    - `CKA_KEY_TYPE = CKK_GENERIC_SECRET` (oder moduläquivalentes
      HMAC-fähiges Secret-Key-Attribut, siehe Slice 002b §HeaderMAC-Port)
+   - `CKA_VALUE_LEN = 32` (HSM-FMT-006 Profil A fordert 32 Byte
+     Header-Key-Output; `CK_HKDF_PARAMS` selbst hat **kein**
+     Output-Length-Feld, die Länge wird ausschließlich über dieses
+     Template-Attribut gesteuert)
    - `CKA_SIGN = true`
    - `CKA_TOKEN = false`
    - `CKA_EXTRACTABLE = false`
@@ -82,19 +89,51 @@ nachweisbar sind:
 2. `C_SignInit(CKM_SHA256_HMAC, headerKeyHandle)` + `C_Sign(headerBytes)`
    liefert einen 32-Byte-HMAC. Roundtrip: zweimal mit identischem Input
    liefert byteweise identischen Output (Determinismus).
-3. `C_WrapKey` auf dem Header-Key-Handle antwortet mit
-   `CKR_KEY_UNEXTRACTABLE` (belegt `CKA_EXTRACTABLE=false`).
+3. Negativ-Test auf Schlüsselauslese: `C_GetAttributeValue` mit
+   `CKA_VALUE` als angefordertem Attribut auf dem Header-Key-Handle
+   liefert `CKR_ATTRIBUTE_SENSITIVE` (belegt `CKA_SENSITIVE=true`,
+   PKCS#11 v3.0 §5.2). Der Test verzichtet bewusst auf `C_WrapKey`,
+   weil das einen zusätzlichen Wrapping-Key mit `CKA_WRAP=true`
+   und einen modul-unterstützten Wrap-Mechanismus voraussetzen
+   würde; ein Modul könnte sonst vorher mit `CKR_KEY_HANDLE_INVALID`
+   oder `CKR_MECHANISM_INVALID` aussteigen und der Test wäre nicht
+   aussagekräftig für `CKA_EXTRACTABLE`/`CKA_SENSITIVE`. Die
+   Durchsetzung von `CKA_EXTRACTABLE=false` über einen
+   Wrap-Negativtest mit ephemerem Wrapping-Key bleibt
+   Slice-002b-Akzeptanzscope (außerhalb des Spike).
 4. `C_DestroyObject(headerKeyHandle)` ist erfolgreich; nachfolgendes
    `C_SignInit` mit demselben Handle liefert `CKR_OBJECT_HANDLE_INVALID`.
-5. Die HKDF-Parameter (Salt `key_id || key_version`, Info
-   `"c-hsm-doc/header-hmac/v1"`, L=32) werden korrekt durchgereicht — Test
-   vergleicht den `C_Sign`-Output gegen eine Pure-Go-HKDF-Referenzimplementierung
-   (`golang.org/x/crypto/hkdf`) mit identischen Inputs auf demselben
-   Master-HMAC-Material. Differenzen sind harter Fehler.
+5. Die HKDF-Parameter werden korrekt durchgereicht: Salt
+   `key_id || key_version` (über `CK_HKDF_PARAMS.pSalt/ulSaltLen` als
+   `CKF_HKDF_SALT_DATA`), Info `"c-hsm-doc/header-hmac/v1"` (über
+   `pInfo/ulInfoLen`), Output-Länge 32 Byte (über das
+   `C_DeriveKey`-Template, **nicht** über `CK_HKDF_PARAMS`).
+   Verifikation: Spike-Test vergleicht den `C_Sign`-Output aus
+   Punkt 2 byteweise gegen
+   `HMAC-SHA256(HKDF-Extract+Expand(SHA-256, IKM=fixture, salt, info,
+   L=32), headerBytes)`, berechnet rein in Pure-Go. Der HKDF-Output
+   ist Zwischen-Ergebnis und nicht selbst der HSM-Output — der HSM
+   gibt den HMAC-Tag über die headerBytes mit dem abgeleiteten
+   Header-Key zurück.
+   Das Pure-Go-IKM stammt aus einem **dediziertem Test-Fixture-IKM**: das CI-Setup-Skript pro Modul
+   (`ci/keys-init/{softhsm,opencryptoki}.sh`) importiert ein bekanntes
+   32-Byte-Hex-IKM (Konstante im Spike-Code, niemals produktives
+   Material) per `C_CreateObject` als Master-HMAC-Key. Das Import-
+   Template setzt `CKA_VALUE=<fixture>`, `CKA_DERIVE=true`,
+   `CKA_EXTRACTABLE=false` und `CKA_SENSITIVE=true` im selben
+   PKCS#11-Aufruf; ein nachträgliches Umschalten dieser Attribute ist
+   kein zulässiger Spike-Pfad. Der Pure-Go-Referenz-HKDF im Spike
+   kennt das Fixture-IKM direkt aus dem Test-Quellcode. Differenzen
+   sind harter Fehler. **Wichtig:**
+   Diese Fixture-Hilfskonstruktion ist Spike-/Test-only —
+   produktiver Adapter-Code unter `internal/adapter/driven/pkcs11/`
+   hat keinen Zugriff auf Software-HKDF oder Software-HMAC über
+   echtes Master-Material; der Lookup-Pfad dort sieht ausschließlich
+   den nicht-extrahierbaren Master-Key per Label.
 6. PKCS#11-Trace (`pkcs11-spy` oder Modul-Log) zeigt pro Lauf genau
-   die erwartete Aufruffolge: `C_OpenSession`, `C_Login`, `C_FindObjects*`
-   (Master-HMAC-Lookup), `C_DeriveKey`, `C_SignInit`, `C_Sign`,
-   `C_DestroyObject`, `C_Logout`, `C_CloseSession`.
+   die in [`trace/README.md`](trace/README.md) definierte kanonische
+   Aufruffolge (`C_Initialize` … `C_Finalize`). Abweichungen zur
+   kanonischen Sequenz sind Spike-Befunde und gehören in §6 Ergebnis.
 
 ---
 
@@ -102,19 +141,28 @@ nachweisbar sind:
 
 ```
 docs/plan/planning/next/002b-spike-hkdf/
-├── README.md       (dieser Plan; nach Lauf um §6 „Ergebnis" ergänzt)
+├── README.md            (dieser Plan; nach Lauf um §6 „Ergebnis" ergänzt)
 ├── spike/
-│   └── README.md   (Probe-Code-Stub; siehe spike/README.md)
+│   ├── README.md        (Konventionen, Datei-Inventar)
+│   ├── doc.go           (Paket-Doc, Build-Tag-Klammer)
+│   ├── mechanism.go     (CK_HKDF_PARAMS-Serialisierer, Pfad a Shim)
+│   └── mechanism_test.go (Hex-Dump-Referenztest + Validierungs-Tests)
 └── trace/
-    └── README.md   (Trace-Capture-Stub; siehe trace/README.md)
+    └── README.md        (kanonische PKCS#11-Aufruffolge; single source of truth)
 ```
+
+Geplant, mit dem ersten HSM-gestützten Spike-Lauf:
+`spike/derive.go`, `spike/sign.go`, `spike/verify.go`,
+`spike/hsm_test.go` und `trace/<modul>-<pfad>.log` pro Modul
+(siehe [`spike/README.md`](spike/README.md) §Geplant).
 
 **Build-Tag-Isolation:** Aller Go-Code unter `spike/` trägt
 `//go:build spike` als erste Build-Tag-Zeile. Der reguläre Repo-Build
 (`go build ./...`, `make ci`) sieht den Spike-Code nicht. Spike-Läufe
-verwenden `go run -tags=spike ./spike/...` bzw. ein dediziertes
-Make-Target (Vorschlag: `make spike-hkdf`, Docker-only gemäß
-[ADR 0002](../../../adr/0002-docker-only-build-pipeline.md)).
+verwenden dedizierte Docker-only-Make-Targets: aktuell
+`make spike-hkdf-test` für die Pure-Go-Serialisierer-Tests, später
+`make spike-hkdf-run` für den HSM-gestützten Lauf gegen beide Module
+(gemäß [ADR 0002](../../../adr/0002-docker-only-build-pipeline.md)).
 
 **Docker-only:** Alle Build- und Lauf-Aufrufe laufen über Docker,
 keine direkten Aufrufe auf dem Host. Das CI-Build-Image aus

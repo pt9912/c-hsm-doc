@@ -75,7 +75,10 @@ SMOKE_PKCS11_MODULE     ?= /usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so
 .PHONY: help deps compile lint test coverage coverage-gate build run clean \
         gates ci fullbuild govulncheck docs-check proto-gen proto-check \
         closure-check smoke-dlopen image-scan image-size \
-        dev-softhsm dev-down dev-purge
+        dev-softhsm dev-down dev-purge spike-hkdf-test
+
+# Spike-Verzeichnis aus Slice 002b §Vorbedingung 3 (ADR 0005 §2.2).
+SPIKE_HKDF_PKG := ./docs/plan/planning/next/002b-spike-hkdf/spike/...
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -200,6 +203,15 @@ ci: gates govulncheck closure-check smoke-dlopen image-scan image-size ## Gates 
 
 fullbuild: ci build ## CI plus runtime image (full closure).
 	@echo "[fullbuild] ci + runtime image green"
+
+# ---- 002b spike (HKDF Profil A) -------------------------------------------
+
+spike-hkdf-test: ## Pure-Go-Unit-Tests des CK_HKDF_PARAMS-Serialisierers (Spike 002b, Pfad a; ADR 0005 §2.2).
+	docker run --rm \
+	    -v "$(CURDIR)":/src -w /src \
+	    -e GOFLAGS="-mod=readonly -buildvcs=false" \
+	    $(GO_BASE_IMAGE) \
+	    go test -tags=spike $(SPIKE_HKDF_PKG)
 
 # ---- local dev environment -------------------------------------------------
 
