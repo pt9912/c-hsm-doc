@@ -5,9 +5,12 @@ End-to-End grün gegen `CKM_HKDF_DERIVE` + `CKM_SHA256_HMAC`,
 HSM-Tag stimmt byteweise mit Pure-Go-RFC-5869-Referenz überein
 (siehe §6.1). SoftHSM v2.6.1/2.7.0 + OpenCryptoki-Software-Token
 bleiben blockiert (kein HKDF). Reproduktion via
-`ci/keys-init/bouncyhsm.sh` + Bouncy-HSM-Image
-([`ci/bouncyhsm/Dockerfile`](../../../../ci/bouncyhsm/Dockerfile));
-Make-Target und Folge-ADR 0006 folgen.
+`make spike-hkdf-bouncyhsm`
+([`scripts/spike-hkdf-bouncyhsm.sh`](../../../../../scripts/spike-hkdf-bouncyhsm.sh)).
+Folge-ADR
+[ADR 0006](../../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md)
+ist `Accepted`. Bleibt: Slice-002b-Plan auf Bouncy HSM als
+Zweitmodul aktualisieren.
 **Datum:** 2026-05-28
 **Bezug:**
 [Slice 002b §Vorbedingungen](../002b-pkcs11-encrypt-hexagon.md),
@@ -35,8 +38,8 @@ Spike entscheidet zwischen drei möglichen Lösungspfaden.
 
 Slice 002b wird **nicht** nach `in-progress/` migriert, solange dieser
 Spike nicht grün ist und keine Folge-ADR
-([ADR 0006 — HKDF-Profil-A-Binding](../../../adr/), geplant)
-existiert.
+([ADR 0006 — HKDF-Profil-A-Binding und Bouncy HSM](../../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md),
+`Accepted` seit 2026-05-28) existiert.
 
 ---
 
@@ -237,8 +240,8 @@ und grün.
 ### 6.2 Bouncy-HSM-Erfolg (2026-05-28)
 
 End-to-End-Lauf grün gegen Bouncy HSM 2.1.0 (siehe
-[`ci/bouncyhsm/Dockerfile`](../../../../ci/bouncyhsm/Dockerfile)
-für das Image, [`ci/keys-init/bouncyhsm.sh`](../../../../ci/keys-init/bouncyhsm.sh)
+[`ci/bouncyhsm/Dockerfile`](../../../../../ci/bouncyhsm/Dockerfile)
+für das Image, [`ci/keys-init/bouncyhsm.sh`](../../../../../ci/keys-init/bouncyhsm.sh)
 für das Setup):
 
 - **C_DeriveKey** mit `CKM_HKDF_DERIVE` + `CK_HKDF_PARAMS`-Shim
@@ -263,15 +266,17 @@ für das Setup):
 ### 6.3 Nächste Spike-Schritte
 
 1. **Make-Target `spike-hkdf-bouncyhsm`** — landed
-   ([`scripts/spike-hkdf-bouncyhsm.sh`](../../../../scripts/spike-hkdf-bouncyhsm.sh),
+   ([`scripts/spike-hkdf-bouncyhsm.sh`](../../../../../scripts/spike-hkdf-bouncyhsm.sh),
    Makefile-Target `spike-hkdf-bouncyhsm`). Reproduziert den gesamten
    Lauf: Image-Build → Docker-Network → Server-Start → Ready-Probe
    → Lib-Extraktion → Init-Skript → Go-Test → Cleanup (Trap, läuft
    auch bei Fehler). Host bleibt clean (ADR 0002).
-2. Folge-ADR zu ADR 0004 (geplant: ADR 0006 — HKDF-Profil-A-
-   Binding + Bouncy-HSM-Modulwahl): begründet Modul-Wechsel von
-   OpenCryptoki auf Bouncy HSM, dokumentiert SoftHSM-Profil-A-
-   Lücke + Bouncy-HSM-Erfolg.
+2. **Folge-ADR
+   [ADR 0006 — HKDF-Profil-A-Binding und Bouncy HSM](../../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md)**
+   — `Accepted` seit 2026-05-28. Schärft ADR 0004 §2.6
+   (Zweitmodul OpenCryptoki → Bouncy HSM) und §1 (HKDF-Binding-
+   Pfad: Shim als Standard). ADR-Index-Schärfungseintrag bei
+   ADR 0004 entsprechend gesetzt.
 3. Slice-002b-Plan auf Bouncy HSM als Zweitmodul aktualisieren
    (additive Erweiterung; Plan ist noch in `next/`, nicht
    `Accepted`).
@@ -282,7 +287,7 @@ für das Setup):
 - **Geprüfte Pfade:** a / b / c — je Modul
 - **Gewählter Pfad:** a (Shim) | b (Fork) | c (Fallback)
 - **Trace-Belege:** Verweis auf `trace/<modul>-<pfad>.log`
-- **Folge-ADR:** ADR 0006 — HKDF-Profil-A-Binding, Status `Proposed`/`Accepted`
+- **Folge-ADR:** [ADR 0006 — HKDF-Profil-A-Binding und Bouncy HSM](../../../adr/0006-hkdf-profil-a-binding-und-bouncy-hsm.md), `Accepted` seit 2026-05-28
 - **Roadmap-Update:** Slice-002b-Vorbedingung-3 abgehakt, Slice nach
   `in-progress/` migrierbar
 
