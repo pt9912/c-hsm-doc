@@ -954,8 +954,9 @@ darf erst danach starten.
    OpenCryptoki), nicht nur SoftHSM. Dadurch wird verhindert, dass
    `CKM_AES_GCM` + `CKM_HKDF_DERIVE` erst im späten Akzeptanztest
    am Zweitmodul scheitern. Drei Pfade — Ergebnis in einer neuen
-   Folge-ADR zu ADR 0004 (geplant: `ADR 0005 —
-   HKDF-Profil-A-Binding`) protokolliert:
+   Folge-ADR zu ADR 0004 (geplant: `ADR 0006 —
+   HKDF-Profil-A-Binding`; ADR 0005 ist bereits durch Planstruktur
+   belegt) protokolliert:
    - (a) **Shim:** `CK_HKDF_PARAMS` wird als `[]byte` korrekt
      serialisiert (C-Struct-Layout aus PKCS#11 v3.0 §6.31) und über
      `pkcs11.NewMechanism(CKM_HKDF_DERIVE, paramBytes)` an
@@ -987,7 +988,7 @@ darf erst danach starten.
    Sub-Verzeichnis-Pattern unter `next/` ist durch die Folge-ADR zu
    `ADR 0001` aus Slice 002a jetzt explizit zulässig. Layout:
    - `README.md` — Vorgehen, geprüfte Pfade (a/b/c), Ergebnis,
-     Verweis auf ADR 0004 (Modulwahl) und ADR 0005
+     Verweis auf ADR 0004 (Modulwahl) und ADR 0006
      (Binding-/HKDF-Entscheidung).
    - `spike/` — minimaler Go-Code, der `C_DeriveKey` mit
      `CKM_HKDF_DERIVE` gegen beide CI-Module aufruft (kein
@@ -1000,7 +1001,7 @@ darf erst danach starten.
    Verzeichnis mit dem Slice nach `in-progress/` (und später nach
    `done/`) als historischer Spike-Nachweis. Slice 002b wird
    **nicht** ohne diesen Spike-Output aktiviert. Der Spike erzeugt
-   außerdem die Folge-ADR zu ADR 0004 (geplant: ADR 0005) und den
+   außerdem die Folge-ADR zu ADR 0004 (geplant: ADR 0006) und den
    ADR-Index-Eintrag; ohne diese ADR-Spur wird 002b nicht nach
    `in-progress/` migriert.
 
@@ -1067,7 +1068,7 @@ darf erst danach starten.
     `CKK_GENERIC_SECRET` (OpenCryptoki ICA), `CKK_SHA256_HMAC`
     oder ein modul-spezifisches Äquivalent. Die genaue Wahl je
     Modul ist Output des HKDF-Spike (Vorbedingung 3) und in ADR 0004
-    bzw. der Folge-ADR 0005 dokumentiert. Setup-Skripte liegen
+    bzw. der Folge-ADR 0006 dokumentiert. Setup-Skripte liegen
     pro Modul als separates Init-Script im Repo
     (`ci/keys-init/{softhsm,opencryptoki,…}.sh`), damit kein
     Vendor-Sniffing im Adapter-Code nötig wird.
@@ -1425,7 +1426,7 @@ darf erst danach starten.
   Vergleich) ist grün.
 - **`CK_HKDF_PARAMS`-Shim verifiziert** (Spike-Output, siehe
   Vorbedingung 3): Der eingesetzte Pfad — Shim, Fork oder Fallback —
-  ist in einer neuen Folge-ADR zu ADR 0004 (geplant: ADR 0005)
+  ist in einer neuen Folge-ADR zu ADR 0004 (geplant: ADR 0006)
   dokumentiert und der ADR-Index ist aktualisiert. Ein dedizierter
   Adapter-Unit-Test
   ruft `C_DeriveKey` mit `CKM_HKDF_DERIVE` und prüft, dass der

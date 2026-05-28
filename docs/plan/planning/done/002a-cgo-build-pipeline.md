@@ -167,7 +167,10 @@ hängen an 002b, nicht an 002a.
   **ADR-0004-Vorläufigkeit:** Sollte der HKDF-Spike in 002b
   zeigen, dass das in ADR 0004 gewählte Zweitmodul die geforderten
   Mechanismen nicht stabil bedient, wird die Modulwahl in einer
-  Folge-ADR (geplant: `ADR 0005 — Zweitmodul-Korrektur`)
+  Folge-ADR (geplant als bedingte Zweitmodul-Korrektur-ADR;
+  Nummer wird beim Anlegen vergeben — `ADR 0005` ist bereits
+  durch Planstruktur belegt, `ADR 0006` ist für den
+  HKDF-Profil-A-Binding-Output des 002b-Spike reserviert)
   protokolliert; ADR 0004 selbst bleibt nach
   [ADR 0001 §2.3](../../adr/0001-documentation-and-planning-structure.md)
   unverändert.
