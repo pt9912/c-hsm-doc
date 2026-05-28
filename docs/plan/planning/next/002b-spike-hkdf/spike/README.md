@@ -30,23 +30,32 @@ SoftHSM v2 und OpenCryptoki exerziert. Konventionen:
   Spy-Output wandert nach `../trace/<modul>-<pfad>.log` (siehe
   [trace/README.md](../trace/README.md)).
 
-## Aktuelle Dateien (Pfad a Shim, Pure-Go)
+## Aktuelle Dateien (Pure-Go, Pfad a Shim + HKDF-Referenz)
 
 - `doc.go` — Paket-Doc, Build-Tag-Klammer.
+- `fixture.go` — `FixtureIKM` (32 Byte, niemals produktiv) +
+  `HeaderHMACInfo` (HSM-FMT-006 Profil A Info-String). CI-Init-
+  Skripte importieren das Fixture-IKM ins HSM (siehe
+  [`../README.md` §3 Punkt 5](../README.md)).
 - `mechanism.go` — `CK_HKDF_PARAMS`-Serialisierer (LP64/LE Layout,
-  Konstanten aus PKCS#11 v3.0 §6.30/§6.31, Salt-Type-Validierung).
+  Konstanten aus PKCS#11 v3.0 §6.30/§6.31, Salt-Type- und
+  Info-Pointer-Validierung).
 - `mechanism_test.go` — Hex-Dump-Referenzwert-Test + Layout-Asserts
-  + Salt-Type-Validierungs-Tests.
+  + Salt-/Info-Validierungs-Tests + Mechanism-Literal-Guards.
+- `verify.go` — Pure-Go-HKDF-Referenz (`golang.org/x/crypto/hkdf`)
+  mit `DeriveHeaderKey` + `ExpectedHeaderMAC`. Liefert den
+  Vergleichswert, gegen den der HSM-`C_Sign`-Output validiert wird.
+- `verify_test.go` — RFC-5869-A.1-Testvektor für die HKDF-Stufe
+  + Determinismus-/Salt-Sensitivity-/Längen-Tests.
 
-## Geplant (HSM-Aufrufpfade, folgen mit dem ersten Spike-Lauf)
+## Geplant (HSM-Aufrufpfade, folgen mit dem ersten HSM-Lauf)
 
 - `derive.go` — `C_DeriveKey`-Aufruf mit `CKM_HKDF_DERIVE`, CGO-Memory
   für `pSalt`/`pInfo` (typisch `C.CBytes` + `C.free`), Template-Setzen
-  (`CKA_EXTRACTABLE=false`, `CKA_SIGN=true`, …).
+  (`CKA_EXTRACTABLE=false`, `CKA_SIGN=true`, `CKA_VALUE_LEN=32`, …).
 - `sign.go` — `C_SignInit`/`C_Sign`-Roundtrip mit `CKM_SHA256_HMAC` auf
   dem abgeleiteten Header-Key-Handle.
-- `verify.go` — Vergleich gegen Pure-Go-HKDF-Referenz
-  (`golang.org/x/crypto/hkdf`).
 - `hsm_test.go` — Integrationstests pro Modul (Modulpfad als
   Env-Variable: `SPIKE_PKCS11_MODULE`, `SPIKE_PKCS11_TOKEN`,
-  `SPIKE_PKCS11_PIN`, `SPIKE_MASTER_HMAC_LABEL`).
+  `SPIKE_PKCS11_PIN`, `SPIKE_MASTER_HMAC_LABEL`). Vergleicht den
+  HSM-`C_Sign`-Output gegen `ExpectedHeaderMAC` aus `verify.go`.

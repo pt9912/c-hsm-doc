@@ -1,9 +1,9 @@
 # Spike — `CKM_HKDF_DERIVE` auf SoftHSM v2 + OpenCryptoki
 
-**Status:** in Arbeit — Pfad (a) Shim-Serialisierer + Pure-Go-Unit-Tests
-landed (`make spike-hkdf-test` grün); HSM-Aufrufpfade (`C_DeriveKey`,
-`C_SignInit`, `C_Sign`, `C_DestroyObject`) gegen SoftHSM v2 + OpenCryptoki
-ausstehend.
+**Status:** in Arbeit — Pfad (a) Shim-Serialisierer + Pure-Go-HKDF-
+Referenz + Unit-Tests landed (`make spike-hkdf-test` grün, RFC-5869-A.1
+verifiziert); HSM-Aufrufpfade (`C_DeriveKey`, `C_SignInit`, `C_Sign`,
+`C_DestroyObject`) gegen SoftHSM v2 + OpenCryptoki ausstehend.
 **Datum:** 2026-05-28
 **Bezug:**
 [Slice 002b §Vorbedingungen](../002b-pkcs11-encrypt-hexagon.md),
@@ -141,20 +141,24 @@ nachweisbar sind:
 
 ```
 docs/plan/planning/next/002b-spike-hkdf/
-├── README.md            (dieser Plan; nach Lauf um §6 „Ergebnis" ergänzt)
+├── README.md             (dieser Plan; nach Lauf um §6 „Ergebnis" ergänzt)
 ├── spike/
-│   ├── README.md        (Konventionen, Datei-Inventar)
-│   ├── doc.go           (Paket-Doc, Build-Tag-Klammer)
-│   ├── mechanism.go     (CK_HKDF_PARAMS-Serialisierer, Pfad a Shim)
-│   └── mechanism_test.go (Hex-Dump-Referenztest + Validierungs-Tests)
+│   ├── README.md         (Konventionen, Datei-Inventar)
+│   ├── doc.go            (Paket-Doc, Build-Tag-Klammer)
+│   ├── fixture.go        (FixtureIKM + HeaderHMACInfo-Konstante)
+│   ├── mechanism.go      (CK_HKDF_PARAMS-Serialisierer, Pfad a Shim)
+│   ├── mechanism_test.go (Hex-Dump-Referenz + Validierungs-Tests)
+│   ├── verify.go         (Pure-Go-HKDF + HMAC-SHA256-Referenz)
+│   └── verify_test.go    (RFC-5869-A.1-Vektor + Determinismus-Tests)
 └── trace/
-    └── README.md        (kanonische PKCS#11-Aufruffolge; single source of truth)
+    └── README.md         (kanonische PKCS#11-Aufruffolge; single source of truth)
 ```
 
 Geplant, mit dem ersten HSM-gestützten Spike-Lauf:
-`spike/derive.go`, `spike/sign.go`, `spike/verify.go`,
-`spike/hsm_test.go` und `trace/<modul>-<pfad>.log` pro Modul
-(siehe [`spike/README.md`](spike/README.md) §Geplant).
+`spike/derive.go`, `spike/sign.go`, `spike/hsm_test.go`,
+`ci/keys-init/{softhsm,opencryptoki}.sh` und
+`trace/<modul>-<pfad>.log` pro Modul (siehe
+[`spike/README.md`](spike/README.md) §Geplant).
 
 **Build-Tag-Isolation:** Aller Go-Code unter `spike/` trägt
 `//go:build spike` als erste Build-Tag-Zeile. Der reguläre Repo-Build
